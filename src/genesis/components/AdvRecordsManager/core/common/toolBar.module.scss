@@ -1,0 +1,22 @@
+.tool_bar_wrapper {
+  margin-bottom: 20px;
+
+  &:has(.tool_bar_side_left:empty):has(.tool_bar_side_right:empty) {
+    margin-bottom: 0;
+  }
+  .toolBar_header {
+    margin-bottom: 12px;
+  }
+  .tool_bar_main {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    .tool_bar_side_left,
+    .tool_bar_side_right {
+      display: flex;
+      align-items: flex-end;
+      gap: 12px;
+    }
+  }
+}

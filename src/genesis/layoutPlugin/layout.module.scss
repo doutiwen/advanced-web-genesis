@@ -1,0 +1,33 @@
+.layout_container {
+  display: flex;
+  &.direction_y {
+    flex-direction: column;
+    height: 100%;
+  }
+}
+
+.layout_list_container {
+  display: grid;
+}
+
+.flex_list {
+  flex-wrap: wrap;
+  align-content: flex-start;
+  height: 100%;
+}
+
+.flex_item {
+  min-width: 0px;
+}
+
+.loading_pack {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: white;
+}

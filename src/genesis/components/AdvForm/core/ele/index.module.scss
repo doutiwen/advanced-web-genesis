@@ -1,0 +1,34 @@
+.form_item_wrap {
+  display: grid;
+  grid-template-columns: var(--form-grid-cols, repeat(2, 1fr));
+  grid-template-rows: var(--form-grid-rows, auto);
+  gap: var(--form-grid-gap, 20px);
+}
+
+.form_item_body {
+  width: 100%;
+  height: 100%;
+}
+
+.form_item_content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form_item_tip {
+  font-size: 14px;
+  color: #f56c6c;
+}
+
+.no_label {
+  :global {
+    .el-form-item__label {
+      padding: 0;
+    }
+    .el-form-item__content {
+      margin-left: 0 !important;
+      width: 100%;
+    }
+  }
+}

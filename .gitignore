@@ -1,0 +1,13 @@
+# 依赖包核心忽略
+node_modules/
+# 打包产物
+dist/
+# 自动导入配置文件
+.eslintrc-auto-import.json
+auto-imports.d.ts
+components.d.ts
+# 工具配置目录
+.trae/
+.claude/
+.vscode/
+.github/

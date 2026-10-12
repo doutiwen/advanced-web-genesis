@@ -1,0 +1,91 @@
+body {
+  font-size: 16px;
+  font-family: 'Microsoft YaHei', Helvetica, Arial, sans-serif;
+  color: #2c3e50;
+  margin: 0 auto;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+a {
+  text-decoration: none;
+  color: #2c3e50;
+}
+
+li {
+  list-style-type: none;
+}
+
+.animate {
+  @include animate;
+}
+
+.t-c {
+  @include t-c;
+}
+//pd为padding的简写
+//xs为超小，sm为小，md为中等，lg为大，xlg为超大（类似Bootstrap的尺寸分类名称）
+.pd-xlg {
+  @include pd-xlg;
+}
+
+.pd-lg {
+  @include pd-lg;
+}
+
+.pd-md {
+  @include pd-md;
+}
+
+.pd-sm {
+  @include pd-sm;
+}
+
+.pd-xs {
+  @include pd-xs;
+}
+//tb为top、bottom的简写
+.pd-tb-xlg {
+  @include pd-tb-xlg;
+}
+
+.pd-tb-lg {
+  @include pd-tb-lg;
+}
+
+.pd-tb-md {
+  @include pd-tb-md;
+}
+
+.pd-tb-sm {
+  @include pd-tb-sm;
+}
+
+.pd-tb-xs {
+  @include pd-tb-xs;
+}
+//m-b为margin-bottom简写
+.m-b-xlg {
+  @include m-b-xlg;
+}
+
+.m-b-lg {
+  @include m-b-lg;
+}
+
+.m-b-md {
+  @include m-b-md;
+}
+
+.m-b-sm {
+  @include m-b-sm;
+}
+
+.m-b-xs {
+  @include m-b-xs;
+}

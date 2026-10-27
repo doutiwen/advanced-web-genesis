@@ -1,7 +1,7 @@
 <template>
   <!-- 表格列表容器 -->
   <div
-    :class="['record-list-wrapper', props.recordListWrapClass]"
+    :class="['record-list-wrapper', props.wrapperClassName]"
     ref="tableBodyRef"
   >
     <!-- 表格组件 -->
@@ -15,7 +15,7 @@
       v-on="props.events"
       ref="elTableRef"
       @select="recordListSelectEvent"
-      @selectAll="recordListSelectEvent"
+      @select-all="recordListSelectEvent"
       @filter-change="recordListFiltersEvent"
       @sort-change="recordListSortEvent"
     >
@@ -278,18 +278,6 @@
         </template>
       </el-table-column>
     </el-table>
-
-    <!-- 分页组件 -->
-    <el-pagination
-      v-if="props.showPagination"
-      class="pagination"
-      v-model:current-page="pageNum"
-      v-model:page-size="pageSize"
-      :total="totalNum"
-      :page-sizes="[10, 20, 50, 100]"
-      v-bind="props.paginationConfig"
-      layout="total, sizes, prev, pager, next, jumper"
-    ></el-pagination>
   </div>
 </template>
 

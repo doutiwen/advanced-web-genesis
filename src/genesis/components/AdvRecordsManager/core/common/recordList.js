@@ -1,55 +1,7 @@
 /**
- * recordList 模块 - 表格列表核心逻辑
- *
- * 【模块功能】
- * 提供表格列表组件的属性定义、事件定义和核心 hook，负责表格数据的获取、渲染、排序、筛选和交互。
- *
- * 【核心组件】
- * 1. recordListProps: 组件属性定义
- * 2. recordListEmits: 组件事件定义
- * 3. useRecordList: 核心 hook，管理表格状态和交互逻辑
- *
- * 【列类型】
- * | 类型 | 说明 | 示例 |
- * |------|------|------|
- * | default | 默认文本列 | 姓名、编号 |
- * | index | 序号列 | 自动生成序号 |
- * | custom | 自定义渲染列 | 状态标签、操作按钮 |
- * | link | 链接列 | 点击跳转 |
- * | openModal | 弹窗列 | 点击打开弹窗 |
- * | formItem | 可编辑表单项列 | 开关、输入框 |
- * | operater | 操作列 | 查看、编辑、删除按钮 |
- * | fileList | 文件列表列 | 附件列表 |
- *
- * 【状态管理】
- * - list: 表格数据列表
- * - listDict: 表格数据字典（按 rowKeyName 索引）
- * - pageNum: 当前页码
- * - pageSize: 每页条数
- * - totalNum: 总条数
- * - loading: 加载状态
- * - formData: 表单数据（用于可编辑列）
- * - filterParams: 筛选参数
- * - sorterParams: 排序参数
- * - toolBarParams: 工具栏参数
- * - extraParams: 额外参数（持久化）
- */
-
-/**
  * 表格列表组件属性定义
  */
 const recordListProps = {
-  /**
-   * 获取列表数据的函数（必填）
-   * @param {Object} params - 查询参数
-   * @param {Object} params.pageParams - 分页参数
-   * @param {Object} params.toolBarParams - 工具栏参数
-   * @param {Object} params.sorterParams - 排序参数
-   * @param {Object} params.filterParams - 筛选参数
-   * @param {Object} params.extraParams - 额外参数（持久化，每次请求都会携带）
-   * @param {Object} params.tempParams - 临时参数（仅单次调用有效，调用后不保留）
-   * @returns {Object|Promise<Object>} 数据对象 { list, total }
-   */
   getList: {
     type: Function,
     required: true,
@@ -57,7 +9,7 @@ const recordListProps = {
   /**
    * 列配置列表（必填）
    */
-  columnsConfig: {
+  columns: {
     type: Array,
     required: true,
   },
@@ -67,9 +19,6 @@ const recordListProps = {
   selectMode: {
     type: Boolean,
     default: false,
-  },
-  selectable: {
-    type: Function,
   },
   /**
    * 已选中的行列表
@@ -100,13 +49,6 @@ const recordListProps = {
     default: () => ({}),
   },
   /**
-   * 分页配置
-   */
-  paginationConfig: {
-    type: Object,
-    default: () => ({}),
-  },
-  /**
    * 表单元素激活状态（用于可编辑列）
    */
   formItemActive: {
@@ -114,40 +56,9 @@ const recordListProps = {
     default: false,
   },
   /**
-   * 是否显示分页
-   */
-  showPagination: {
-    type: Boolean,
-    default: true,
-  },
-  /**
-   * 表格样式
-   */
-  style: {
-    type: String,
-  },
-  /**
-   * 额外参数（持久化，每次请求都会携带）
-   */
-  extraParams: {
-    type: Object,
-  },
-  /**
-   * 当前页码（支持双向绑定）
-   */
-  pageNum: {
-    type: Number,
-  },
-  /**
-   * 每页条数（支持双向绑定）
-   */
-  pageSize: {
-    type: Number,
-  },
-  /**
    * 列表容器额外样式类名
    */
-  recordListWrapClass: {
+  wrapperClassName: {
     type: String,
   },
 };
@@ -162,8 +73,6 @@ const recordListEmits = [
   'openModal', // 打开弹窗
   'getToolBarParams', // 获取工具栏参数
   'listDataGet', // 列表数据获取完成
-  'update:pageNum', // 更新页码（双向绑定）
-  'update:pageSize', // 更新每页条数（双向绑定）
 ];
 
 /**
@@ -191,10 +100,7 @@ const useRecordList = (
     selectMode,
     rowKeyName,
     formItemActive,
-    extraParams,
     showPagination,
-    pageNum: propsPageNum,
-    pageSize: propsPageSize,
   },
   emits,
   setFilterList,
@@ -202,48 +108,51 @@ const useRecordList = (
   renderSelectedRowCallback
 ) => {
   /**
-   * 状态管理对象
+   * 拉取列表数据相关的参数（分页 / 工具栏 / 筛选 / 排序 / 其他参数）
+   * 统一收敛到 getListFnParams，_getList 直接把它作为 getList 的入参
    */
-  const state = {
-    // 表格数据列表
-    columns: ref([]),
-    // 表格数据列表
-    list: ref([]),
-    // 表格数据字典（按 rowKeyName 索引）
-    listDict: computed(() => {
-      const dictInfo = {};
-      for (const rowItem of state.list.value) {
-        dictInfo[rowItem[toValue(rowKeyName)]] = rowItem;
-      }
-      return dictInfo;
-    }),
-    // 当前页码（优先使用 props 值）
-    pageNum: ref(toValue(propsPageNum) ?? 1),
-    // 每页条数（优先使用 props 值）
-    pageSize: ref(toValue(propsPageSize) ?? 20),
-    // 总条数
-    totalNum: ref(0),
-    // 加载状态
-    loading: ref(false),
-    // 表单数据（用于可编辑列）
-    formData: ref({}),
+  // 当前页码（默认 1，由 search 的 pageParams 更新；分页组件通过该 ref 双向绑定）
+  const pageNum = ref(1);
+  // 每页条数（默认 20，由 search 的 pageParams 更新；分页组件通过该 ref 双向绑定）
+  const pageSize = ref(20);
+  // 用 reactive 包裹：内部 ref 经代理访问时自动解包，传给 getList 时即为普通数值
+  const getListFnParams = reactive({
+    // 分页参数
+    pageParams: {
+      pageNum,
+      pageSize,
+    },
+    // 工具栏参数
+    toolBarParams: null,
     // 筛选参数
     filterParams: null,
     // 排序参数
     sorterParams: null,
-    // 工具栏参数
-    toolBarParams: null,
-    // 其他参数
-    extraParams: toValue(extraParams) || null,
-    // 是否有表单操作列
-    formItemHasOperater: false,
-    // 当前页需要回显的选中行（跨页切换时缓存，getListData 完成后消费）
-    currentPageSelectedRows: ref([]),
-  };
+    // 其他参数（由 search 的 extraParams 更新）
+    extraParams: null,
+  });
+
+  /**
+   * 其他状态变量
+   */
+  // 表格数据列表（列配置）
+  const columns = ref([]);
+  // 表格数据列表
+  const list = ref([]);
+  // 总条数
+  const totalNum = ref(0);
+  // 加载状态
+  const loading = ref(false);
+  // 表单数据（用于可编辑列）
+  const formData = ref({});
+  // 是否有表单操作列
+  let formItemHasOperater = false;
+  // 当前页需要回显的选中行（跨页切换时缓存，_getList 完成后消费）
+  const currentPageSelectedRows = ref([]);
 
   emits('getToolBarParams', (toolBarParams) => {
     if (toolBarParams) {
-      state.toolBarParams = toolBarParams;
+      getListFnParams.toolBarParams = toolBarParams;
     }
   });
 
@@ -251,53 +160,29 @@ const useRecordList = (
    * 监听列配置变化，更新列列表
    */
   watchEffect(() => {
-    state.columns.value = toValue(columnsConfig).map((sourceCol) => {
+    columns.value = toValue(columnsConfig).map((sourceCol) => {
       const targetCol = { ...sourceCol };
       if (targetCol.getFilterList) {
         // 设置筛选列表
-        setFilterList(targetCol, state.columns);
+        setFilterList(targetCol, columns);
       }
       return targetCol;
     });
   });
 
   /**
-   * 监听外部 pageNum 变化，同步到内部状态
-   */
-  watch(
-    () => toValue(propsPageNum),
-    (val) => {
-      if (val !== undefined && val !== state.pageNum.value) {
-        state.pageNum.value = val;
-      }
-    }
-  );
-
-  /**
-   * 监听外部 pageSize 变化，同步到内部状态
-   */
-  watch(
-    () => toValue(propsPageSize),
-    (val) => {
-      if (val !== undefined && val !== state.pageSize.value) {
-        state.pageSize.value = val;
-      }
-    }
-  );
-
-  /**
    * 设置筛选参数
    * @param {Object} filterParams - 筛选参数
    */
   const setFilterParams = (filterParams) => {
-    state.filterParams = filterParams;
+    getListFnParams.filterParams = filterParams;
   };
 
   /**
    * 清空筛选参数
    */
   const clearFilterParams = () => {
-    state.filterParams = null;
+    getListFnParams.filterParams = null;
   };
 
   /**
@@ -305,25 +190,14 @@ const useRecordList = (
    * @param {Object} sorterParams - 排序参数
    */
   const setSorterParams = (sorterParams) => {
-    state.sorterParams = sorterParams;
+    getListFnParams.sorterParams = sorterParams;
   };
 
   /**
    * 清空排序参数
    */
   const clearSorterParams = () => {
-    state.sorterParams = null;
-  };
-
-  /**
-   * 获取当前列表数据
-   * @returns {Object} 列表数据对象 { list, total }
-   */
-  const getRecordList = () => {
-    return {
-      list: state.list.value,
-      total: state.totalNum.value,
-    };
+    getListFnParams.sorterParams = null;
   };
 
   /**
@@ -331,7 +205,7 @@ const useRecordList = (
    * @param {Array} rows - 选中行列表
    */
   const setCurrentPageSelectedRows = (rows) => {
-    state.currentPageSelectedRows.value = rows || [];
+    currentPageSelectedRows.value = rows || [];
   };
 
   /**
@@ -340,18 +214,18 @@ const useRecordList = (
    * 匹配成功后调用 renderSelectedRowCallback 勾选对应行
    */
   const restoreSelectedRows = () => {
-    if (state.currentPageSelectedRows.value.length > 0 && renderSelectedRowCallback) {
+    if (currentPageSelectedRows.value.length > 0 && renderSelectedRowCallback) {
       nextTick(() => {
         const selectedIds = new Set(
-          state.currentPageSelectedRows.value.map((row) => row[toValue(rowKeyName)])
+          currentPageSelectedRows.value.map((row) => row[toValue(rowKeyName)])
         );
-        const matchedRows = state.list.value.filter((row) =>
+        const matchedRows = list.value.filter((row) =>
           selectedIds.has(row[toValue(rowKeyName)])
         );
         if (matchedRows.length > 0) {
           renderSelectedRowCallback(matchedRows);
         }
-        state.currentPageSelectedRows.value = [];
+        currentPageSelectedRows.value = [];
       });
     }
   };
@@ -384,10 +258,10 @@ const useRecordList = (
     if (formConfig.set) {
       value = formConfig.set(sourceValue, key);
     }
-    if (!state.formData.value[rowKeyValue]) {
-      state.formData.value[rowKeyValue] = { [key]: value };
+    if (!formData.value[rowKeyValue]) {
+      formData.value[rowKeyValue] = { [key]: value };
     } else {
-      state.formData.value[rowKeyValue][key] = value;
+      formData.value[rowKeyValue][key] = value;
     }
   };
 
@@ -412,7 +286,7 @@ const useRecordList = (
     delete targetItem.children;
     let operaterCol;
 
-    for (const colItem of state.columns.value) {
+    for (const colItem of columns.value) {
       const key = colItem.key;
       const sourceValue = sourceRowItem[key];
 
@@ -472,7 +346,7 @@ const useRecordList = (
           }
         } else {
           targetItem[Symbol.for(`operater-${operaterItem.key}-show`)] = true;
-          state.formItemHasOperater = true;
+          formItemHasOperater = true;
           targetItem[Symbol.for('operater-formItemOperater-loading')] = false;
         }
       }
@@ -528,58 +402,33 @@ const useRecordList = (
 
   /**
    * 获取列表数据
-   * @param {Object} tempParams - 临时参数（仅单次调用有效）
    */
-  const getListData = async (tempParams) => {
-    state.loading.value = true;
-    const getListFnParams = {};
+  const _getList = async () => {
+    loading.value = true;
 
-    // 组装分页参数
-    getListFnParams.pageParams = {
-      pageNum: state.pageNum.value,
-      pageSize: state.pageSize.value,
-    };
-
-    // 组装其他参数
-    state.toolBarParams && (getListFnParams.toolBarParams = state.toolBarParams);
-    state.sorterParams && (getListFnParams.sorterParams = state.sorterParams);
-    state.filterParams && (getListFnParams.filterParams = state.filterParams);
-    toValue(extraParams) && (getListFnParams.extraParams = toValue(extraParams));
-    tempParams && (getListFnParams.tempParams = tempParams);
-
-    // 清理空值参数
-    for (const paramsType of Object.keys(getListFnParams)) {
-      for (const key of Object.keys(getListFnParams[paramsType])) {
-        if (!notEmptyValue(getListFnParams[paramsType][key])) {
-          Reflect.deleteProperty(getListFnParams[paramsType], key);
-        }
-      }
-      if (!Object.keys(getListFnParams[paramsType]).length) {
-        Reflect.deleteProperty(getListFnParams, paramsType);
-      }
-    }
-
-    // 调用获取数据函数
+    // 直接使用拉取参数对象作为 getList 入参
+    // getListFnParams 为 reactive，其中 pageNum/pageSize 访问时已解包为普通数值
     if (getVarType(toValue(getList)) === 'asyncFunction') {
       toValue(getList)(getListFnParams)
-        .then(({ list, total }) => {
-          state.list.value = listFormat(list);
-          state.totalNum.value = total;
-          emits('listDataGet', { list, total });
+        // 返回的 list 与状态变量 list 重名会遮蔽，故解构时重命名为 responseList
+        .then(({ list: responseList, total }) => {
+          list.value = listFormat(responseList);
+          totalNum.value = total;
+          emits('listDataGet', { list: responseList, total });
           restoreSelectedRows();
         })
         .catch(() => {
           emits('listDataGet', { list: [], total: 0 });
         })
         .finally(() => {
-          state.loading.value = false;
+          loading.value = false;
         });
     } else {
-      const { list, total } = toValue(getList)(getListFnParams);
-      state.list.value = listFormat(list);
-      state.totalNum.value = total;
-      state.loading.value = false;
-      emits('listDataGet', { list, total });
+      const { list: responseList, total } = toValue(getList)(getListFnParams);
+      list.value = listFormat(responseList);
+      totalNum.value = total;
+      loading.value = false;
+      emits('listDataGet', { list: responseList, total });
       restoreSelectedRows();
     }
   };
@@ -590,7 +439,7 @@ const useRecordList = (
    * @param {Object} data - 更新的数据
    */
   const editRowData = (keyValue, data) => {
-    const targetRow = state.list.value.find((i) => i[toValue(rowKeyName)] === keyValue);
+    const targetRow = list.value.find((i) => i[toValue(rowKeyName)] === keyValue);
     if (targetRow) {
       Object.assign(targetRow, data);
     }
@@ -602,7 +451,7 @@ const useRecordList = (
    * @param {Object} rowData - 行数据
    */
   const exceformItemFn = (columnItem, rowData) => {
-    const index = state.list.value.findIndex(
+    const index = list.value.findIndex(
       (i) => i[toValue(rowKeyName)] === rowData[toValue(rowKeyName)]
     );
 
@@ -611,17 +460,17 @@ const useRecordList = (
         .fn(rowData)
         .then((res) => {
           if (columnItem.get) {
-            state.list.value[index][columnItem.key] = columnItem.get(
-              state.formData.value[rowData[toValue(rowKeyName)]][columnItem.key],
+            list.value[index][columnItem.key] = columnItem.get(
+              formData.value[rowData[toValue(rowKeyName)]][columnItem.key],
               index,
               rowData
             );
           } else {
-            state.list.value[index][columnItem.key] =
-              state.formData.value[rowData[toValue(rowKeyName)]][columnItem.key];
+            list.value[index][columnItem.key] =
+              formData.value[rowData[toValue(rowKeyName)]][columnItem.key];
           }
           if (res?.refreshRecordList) {
-            getListData();
+            _getList();
           }
         })
         .catch(() => {
@@ -636,7 +485,7 @@ const useRecordList = (
     } else {
       const res = columnItem.fn(rowData);
       if (res?.refreshRecordList) {
-        getListData();
+        _getList();
       }
     }
   };
@@ -649,7 +498,7 @@ const useRecordList = (
    */
   const formItemInputEventHandler = (columnItem, rowData, sourceEvent) => {
     const formItemConfig = columnItem.formItemConfig;
-    if (!state.formItemHasOperater && columnItem.fn && !rowData[Symbol.for('formItemDisable')]) {
+    if (!formItemHasOperater && columnItem.fn && !rowData[Symbol.for('formItemDisable')]) {
       if (columnItem.debounce || formItemConfig.type === 'input') {
         // 防抖处理
         const rowkeyValue = rowData[toValue(rowKeyName)];
@@ -693,14 +542,14 @@ const useRecordList = (
               if (msg && typeof message === 'function') {
                 message(msg);
               }
-              refreshRecordList && getListData();
+              refreshRecordList && _getList();
             });
           } else if (getVarType(operaterItem.fn) === 'function') {
             const res = operaterItem.fn(originalRowData);
             if (res?.message && typeof message === 'function') {
               message(res.message);
             }
-            res?.refreshRecordList && getListData();
+            res?.refreshRecordList && _getList();
           }
         }
         break;
@@ -725,13 +574,13 @@ const useRecordList = (
                   if (msg && typeof message === 'function') {
                     message(msg);
                   }
-                  refreshRecordList && getListData();
+                  refreshRecordList && _getList();
                 } else {
                   const { refreshRecordList, message: msg } = operaterItem.confirm.fn(rowData);
                   if (msg && typeof message === 'function') {
                     message(msg);
                   }
-                  refreshRecordList && getListData();
+                  refreshRecordList && _getList();
                 }
               }
             })
@@ -752,14 +601,14 @@ const useRecordList = (
                       if (msg && typeof message === 'function') {
                         message(msg);
                       }
-                      refreshRecordList && getListData();
+                      refreshRecordList && _getList();
                     });
                 } else {
                   const { refreshRecordList, message: msg } = operaterItem.confirm.fn(rowData);
                   if (msg && typeof message === 'function') {
                     message(msg);
                   }
-                  refreshRecordList && getListData();
+                  refreshRecordList && _getList();
                 }
               }
               break;
@@ -796,13 +645,13 @@ const useRecordList = (
           });
           // 恢复原始数据
           for (const formItemKey of Object.keys(
-            state.formData.value[rowData[toValue(rowKeyName)]]
+            formData.value[rowData[toValue(rowKeyName)]]
           )) {
             setFormData(
               formItemKey,
               rowData[formItemKey],
               rowData[toValue(rowKeyName)],
-              state.columns.value.find((i) => i.key === formItemKey).formItemConfig
+              columns.value.find((i) => i.key === formItemKey).formItemConfig
             );
           }
         } else if (operateType === 'submit') {
@@ -815,23 +664,23 @@ const useRecordList = (
             .then((resetList) => {
               const newRowData = {};
               for (const formItemKey of Object.keys(
-                state.formData.value[rowData[toValue(rowKeyName)]]
+                formData.value[rowData[toValue(rowKeyName)]]
               )) {
                 newRowData[formItemKey] =
-                  state.formData.value[rowData[toValue(rowKeyName)]][formItemKey];
+                  formData.value[rowData[toValue(rowKeyName)]][formItemKey];
               }
-              resetList ? getListData() : editRowData(rowData[toValue(rowKeyName)], newRowData);
+              resetList ? _getList() : editRowData(rowData[toValue(rowKeyName)], newRowData);
             })
             .catch(() => {
               // 恢复原始数据
               for (const formItemKey of Object.keys(
-                state.formData.value[rowData[toValue(rowKeyName)]]
+                formData.value[rowData[toValue(rowKeyName)]]
               )) {
                 setFormData(
                   formItemKey,
                   rowData[formItemKey],
                   rowData[toValue(rowKeyName)],
-                  state.columns.value.find((i) => i.key === formItemKey).formItemConfig
+                  columns.value.find((i) => i.key === formItemKey).formItemConfig
                 );
               }
             })
@@ -885,76 +734,100 @@ const useRecordList = (
   };
 
   /**
+   * 用搜索传入的参数更新 getListFnParams
+   * 规则：参数对象中存在该键则更新；值为 null 则清空；不存在该键则保持原值
+   * @param {Object} params - 搜索参数
+   */
+  const updateGetListFnParams = (params) => {
+    for (const key of Object.keys(getListFnParams)) {
+      // 未传入该参数时不处理，保留上一次的取值
+      if (!(key in params)) {
+        continue;
+      }
+      const value = params[key];
+      if (key !== 'pageParams') {
+        // 其余参数直接覆盖，传 null 即为清空
+        getListFnParams[key] = value;
+      } else if (value == null) {
+        // 分页参数传 null：清空并恢复默认分页
+        pageNum.value = 1;
+        pageSize.value = 20;
+      } else {
+        // 分页参数只更新传入的字段，未传入的字段保持原值
+        if (value.pageNum !== undefined) {
+          pageNum.value = value.pageNum;
+        }
+        if (value.pageSize !== undefined) {
+          pageSize.value = value.pageSize;
+        }
+      }
+    }
+  };
+
+  /**
    * 搜索函数
    * @param {Object} params - 搜索参数
-   * @param {Object} params.tempParams - 临时参数（仅单次调用有效）
-   * @param {Object} params.extraParams - 额外参数（持久化）
-   * @param {Object} params.toolBarParams - 工具栏参数
+   * @param {Object} [params.pageParams] - 分页参数 { pageNum, pageSize }，传 null 恢复默认分页
+   * @param {Object} [params.toolBarParams] - 工具栏参数，传 null 清空
+   * @param {Object} [params.filterParams] - 筛选参数，传 null 清空
+   * @param {Object} [params.sorterParams] - 排序参数，传 null 清空
+   * @param {Object} [params.extraParams] - 额外参数（持久化），传 null 清空
    */
-  const search = async ({ tempParams, extraParams, toolBarParams } = {}) => {
+  const search = async (params = {}) => {
     toValue(selectMode) && emits('clearBatch');
-    state.pageNum.value = 1;
-    toolBarParams && (state.toolBarParams = toolBarParams);
-    extraParams && (state.extraParams = extraParams);
-    await getListData(tempParams);
+    // 只更新本次传入的参数，未传入的参数保持原值
+    updateGetListFnParams(params);
+    await _getList();
   };
 
   /**
    * 监听页码变化
    */
-  watch(state.pageNum, (newVal) => {
-    if (newVal !== toValue(propsPageNum)) {
-      emits('update:pageNum', newVal);
-    }
+  watch(pageNum, (newVal) => {
     if (toValue(selectMode)) {
       emits('getPageBatchList', newVal);
     }
-    getListData();
+    _getList();
   });
 
   /**
    * 监听每页条数变化
    */
-  watch(state.pageSize, (newVal) => {
-    if (newVal !== toValue(propsPageSize)) {
-      emits('update:pageSize', newVal);
-    }
+  watch(pageSize, () => {
     toValue(selectMode) && emits('clearBatch');
-    if (state.pageNum.value !== 1) {
-      state.pageNum.value = 1;
+    if (pageNum.value !== 1) {
+      pageNum.value = 1;
     } else {
-      getListData();
+      _getList();
     }
   });
 
   /**
    * 初始化：加载数据
    */
-  getListData();
+  _getList();
 
   /**
    * 暴露给父组件的方法配置
    */
   const defineExposeConfig = {
     search,
-    getRecordList,
     setCurrentPageSelectedRows,
     /**
      * 刷新列表（保持当前页码不变）
-     * @param {Object} tempParams - 临时参数（仅单次调用有效）
      */
-    refreshList: getListData,
+    refreshList: _getList,
   };
 
   // 返回状态和方法集合
   return {
-    list: state.list,
-    columns: state.columns,
-    pageNum: state.pageNum,
-    pageSize: state.pageSize,
-    totalNum: state.totalNum,
-    loading: state.loading,
-    formData: state.formData,
+    list,
+    columns,
+    pageNum,
+    pageSize,
+    totalNum,
+    loading,
+    formData,
     formItemInputEventHandler,
     operaterItemEventHandler,
     columnEventHandler,
@@ -963,9 +836,7 @@ const useRecordList = (
     setSorterParams,
     clearSorterParams,
     setCurrentPageSelectedRows,
-    getListData,
     search,
-    getRecordList,
     defineExposeConfig,
   };
 };

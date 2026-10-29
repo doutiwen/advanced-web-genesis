@@ -386,14 +386,7 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
               let optionsState = shallowRef([]);
               if (targetItem?.options) {
                 if (Array.isArray(targetItem.options)) {
-                  console.log(
-                    '113',
-                    targetItem.options,
-                    isRef(targetItem.options),
-                    isReactive(targetItem.options)
-                  );
                   if (isRef(targetItem.options) || isReactive(targetItem.options)) {
-                    console.log('114', targetItem.options);
                     optionsState = targetItem.options;
                   } else {
                     optionsState.value = targetItem.options;

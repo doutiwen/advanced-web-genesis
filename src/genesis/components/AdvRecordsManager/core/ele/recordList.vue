@@ -396,7 +396,6 @@
     columns,
     pageNum,
     pageSize,
-    totalNum,
     loading,
     formData,
     formItemInputEventHandler,
@@ -548,14 +547,6 @@
 </script>
 
 <style lang="scss" scoped>
-  /**
-   * 分页组件样式
-   */
-  .pagination {
-    margin-top: 15px;
-    justify-content: flex-end;
-  }
-
   /**
    * 文件列表弹出框图片样式
    */

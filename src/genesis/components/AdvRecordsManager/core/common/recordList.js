@@ -14,20 +14,6 @@ const recordListProps = {
     required: true,
   },
   /**
-   * 批量选择模式
-   */
-  selectMode: {
-    type: Boolean,
-    default: false,
-  },
-  /**
-   * 已选中的行列表
-   */
-  selectedRows: {
-    type: Array,
-    default: () => [],
-  },
-  /**
    * 行唯一标识字段名
    */
   rowKeyName: {
@@ -61,6 +47,13 @@ const recordListProps = {
   wrapperClassName: {
     type: String,
   },
+  /**
+   * 已选中的行唯一标识列表（根据 rowKeyName 生成）
+   */
+  selectedRowsKey: {
+    type: Array,
+    default: () => [],
+  },
 };
 
 /**
@@ -72,17 +65,42 @@ const recordListEmits = [
   'clearBatch', // 清除批量选择
   'openModal', // 打开弹窗
   'getToolBarParams', // 获取工具栏参数
-  'listDataGet', // 列表数据获取完成
+  'update:selectedRowsKey', // 更新选中行列表
 ];
 
-/**
- * 获取行的原始数据（后端返回的原样数据）
- * formatNode 中通过 Symbol.for('originalData') 保留原始行数据，
- * openModal 传递原样数据，由弹窗内表单/内容组件按需处理（如解密）。
- * @param {Object} rowData - 格式化后的行节点
- * @returns {Object} 原始行数据
- */
-const getOriginalRowData = (rowData) => rowData?.[Symbol.for('originalData')] ?? rowData;
+const formItemTypes = ['input', 'select', 'treeSelect'];
+
+// 列配置格式化
+const columnCfgFormat = (sourceColCfg) => {
+  const formatColCfg = { ...sourceColCfg };
+
+  if (!sourceColCfg?.attrs) {
+    formatColCfg.attrs = {};
+  }
+
+  switch (sourceColCfg.type) {
+    case 'confirm':
+      if (!sourceColCfg?.confirm?.text) {
+        formatColCfg.confirm.text = '确认';
+      }
+      if (!sourceColCfg?.title) {
+        formatColCfg.title = `是否确认该操作？`;
+      }
+      if (!sourceColCfg?.cancel) {
+        formatColCfg.cancel = {
+          text: '取消',
+        };
+      } else if (!sourceColCfg.cancel?.text) {
+        formatColCfg.cancel.text = '取消';
+      }
+      break;
+  }
+  if (formatColCfg.getFilterList) {
+    // 设置筛选列表
+    setFilterList(formatColCfg, _columns);
+  }
+  return formatColCfg;
+};
 
 /**
  * 表格列表核心 hook
@@ -90,33 +108,40 @@ const getOriginalRowData = (rowData) => rowData?.[Symbol.for('originalData')] ??
  * @param {Object} props - 组件属性
  * @param {Function} emits - 事件发射函数
  * @param {Function} setFilterList - 设置筛选列表函数
- * @param {Function} message - 消息提示方法
+ * @param {Function} uiMessage - 消息提示方法
  * @returns {Object} 状态和方法集合
  */
-const useRecordList = (
-  {
-    getList,
-    columnsConfig,
-    selectMode,
-    rowKeyName,
-    formItemActive,
-    showPagination,
-  },
+const useRecordList = ({
+  props,
   emits,
   setFilterList,
-  message,
-  renderSelectedRowCallback
-) => {
+  uiMessage,
+  uiMessageBox,
+  renderSelectedRowCallback,
+}) => {
+  const { getList, columns, rowKeyName, formItemActive } = props;
+
+  // 表格数据列表（列配置）
+  const _columns = columns.map((sourceCol) => columnCfgFormat(sourceCol));
+  const colKeyToCfgMap = Object.fromEntries(_columns.map((i) => [i.key, i]));
+  // 表格数据列表
+  const list = ref([]);
+  const rowKeyToRowMap = computed(() => {
+    const map = {};
+    for (const item of list.value) {
+      map[item[_rowKeyName]] = item;
+    }
+    return map;
+  });
+  const hasFormItemColumn = computed(() => {
+    return _columns.value.some((colItem) => formItemTypes.includes(colItem.type));
+  });
+
   /**
    * 拉取列表数据相关的参数（分页 / 工具栏 / 筛选 / 排序 / 其他参数）
    * 统一收敛到 getListFnParams，_getList 直接把它作为 getList 的入参
    */
-  // 当前页码（默认 1，由 search 的 pageParams 更新；分页组件通过该 ref 双向绑定）
-  const pageNum = ref(1);
-  // 每页条数（默认 20，由 search 的 pageParams 更新；分页组件通过该 ref 双向绑定）
-  const pageSize = ref(20);
-  // 用 reactive 包裹：内部 ref 经代理访问时自动解包，传给 getList 时即为普通数值
-  const getListFnParams = reactive({
+  const getListFnParams = {
     // 分页参数
     pageParams: {
       pageNum,
@@ -130,25 +155,19 @@ const useRecordList = (
     sorterParams: null,
     // 其他参数（由 search 的 extraParams 更新）
     extraParams: null,
-  });
+  };
 
-  /**
-   * 其他状态变量
-   */
-  // 表格数据列表（列配置）
-  const columns = ref([]);
-  // 表格数据列表
-  const list = ref([]);
-  // 总条数
-  const totalNum = ref(0);
+  const _rowKeyName = toValue(rowKeyName);
   // 加载状态
   const loading = ref(false);
   // 表单数据（用于可编辑列）
   const formData = ref({});
   // 是否有表单操作列
   let formItemHasOperater = false;
-  // 当前页需要回显的选中行（跨页切换时缓存，_getList 完成后消费）
-  const currentPageSelectedRows = ref([]);
+
+  const selectMode = ref(false);
+  const selectedRowsKey = new Set();
+  let isUserSelect = false;
 
   emits('getToolBarParams', (toolBarParams) => {
     if (toolBarParams) {
@@ -156,15 +175,93 @@ const useRecordList = (
     }
   });
 
+  // 进入选择模式
+  const entrySelectMode = () => {
+    selectMode.value = true;
+  };
+
+  // 退出选择模式(清空所有选中行状态)
+  const exitSelectMode = () => {
+    selectedRowsKey.clear();
+    emits('update:selectedRowsKey', []);
+    selectMode.value = false;
+  };
+
+  // 获取所有页码的选中行唯一标识
+  const getAllSelectedRowsKey = () => {
+    return [...selectedRowsKey];
+  };
+
+  const selectRowHandle = (currentPageSelectedRows, currentToggleRow) => {
+    const currentRowChecked = currentPageSelectedRows.find(
+      (row) => row[_rowKeyName] === currentToggleRow[_rowKeyName]
+    );
+    if (currentRowChecked) {
+      selectedRowsKey.add(currentToggleRow[_rowKeyName]);
+    } else {
+      selectedRowsKey.delete(currentToggleRow[_rowKeyName]);
+    }
+    isUserSelect = true;
+    emits('update:selectedRowsKey', getAllSelectedRowsKey());
+  };
+
+  const selectAllRowsHandle = (currentPageToggleRows) => {
+    if (currentPageToggleRows?.length) {
+      for (const row of currentPageToggleRows) {
+        selectedRowsKey.add(row[_rowKeyName]);
+      }
+    } else {
+      for (const row of list.value) {
+        selectedRowsKey.delete(row[_rowKeyName]);
+      }
+    }
+    isUserSelect = true;
+    emits('update:selectedRowsKey', getAllSelectedRowsKey());
+  };
+
+  /**
+   * 数据加载完成后恢复选中行状态
+   * 通过 rowKeyName(id) 对比缓存中的选中行与当前列表数据，
+   * 匹配成功后调用 renderSelectedRowCallback 勾选对应行
+   */
+  const restoreSelectedRows = () => {
+    if (selectMode.value) {
+      const matchedRows = list.value.filter((row) => selectedRowsKey.has(row[_rowKeyName]));
+      if (matchedRows.length) {
+        nextTick(() => {
+          renderSelectedRowCallback(matchedRows);
+        });
+      }
+    }
+  };
+
+  watch(
+    () => props.selectedRowsKey,
+    (newV, oldV) => {
+      if (selectMode.value && !isUserSelect) {
+        if (newV?.length) {
+          selectedRowsKey.clear();
+          for (const row of newV) {
+            selectedRowsKey.add(row[_rowKeyName]);
+          }
+        } else {
+          selectedRowsKey.clear();
+        }
+        restoreSelectedRows();
+      }
+      isUserSelect = false;
+    }
+  );
+
   /**
    * 监听列配置变化，更新列列表
    */
   watchEffect(() => {
-    columns.value = toValue(columnsConfig).map((sourceCol) => {
+    _columns.value = columns.map((sourceCol) => {
       const targetCol = { ...sourceCol };
       if (targetCol.getFilterList) {
         // 设置筛选列表
-        setFilterList(targetCol, columns);
+        setFilterList(targetCol, _columns);
       }
       return targetCol;
     });
@@ -209,28 +306,6 @@ const useRecordList = (
   };
 
   /**
-   * 数据加载完成后恢复选中行状态
-   * 通过 rowKeyName(id) 对比缓存中的选中行与当前列表数据，
-   * 匹配成功后调用 renderSelectedRowCallback 勾选对应行
-   */
-  const restoreSelectedRows = () => {
-    if (currentPageSelectedRows.value.length > 0 && renderSelectedRowCallback) {
-      nextTick(() => {
-        const selectedIds = new Set(
-          currentPageSelectedRows.value.map((row) => row[toValue(rowKeyName)])
-        );
-        const matchedRows = list.value.filter((row) =>
-          selectedIds.has(row[toValue(rowKeyName)])
-        );
-        if (matchedRows.length > 0) {
-          renderSelectedRowCallback(matchedRows);
-        }
-        currentPageSelectedRows.value = [];
-      });
-    }
-  };
-
-  /**
    * 下载文件
    * @param {Object} params - 下载参数
    * @param {string} params.url - 文件URL
@@ -253,64 +328,57 @@ const useRecordList = (
    * @param {*} rowKeyValue - 行唯一标识值
    * @param {Object} formConfig - 表单配置
    */
-  const setFormData = (key, sourceValue, rowKeyValue, formConfig) => {
-    let value = sourceValue;
-    if (formConfig.set) {
-      value = formConfig.set(sourceValue, key);
-    }
-    if (!formData.value[rowKeyValue]) {
-      formData.value[rowKeyValue] = { [key]: value };
+  const setFormData = (key, sourceRowData) => {
+    const data = sourceRowData[key];
+    const rowKey = sourceRowData[_rowKeyName];
+    if (!formData.value[rowKey]) {
+      formData.value[rowKey] = { [key]: data };
     } else {
-      formData.value[rowKeyValue][key] = value;
+      formData.value[rowKey][key] = data;
     }
   };
 
   /**
    * 单个节点格式化
-   * @param {Object} sourceRowItem - 原始行数据
+   * @param {Object} sourceRowData - 原始行数据
    * @param {number} rowIndex - 全局行号（原始遍历序号）
    * @param {number} siblingIndex - 兄弟节点序号（0 起，树形结构下为当前节点在兄弟节点中的位置）
    * @param {number} level - 节点层级（根节点为 1）
    * @returns {Object} 格式化后的节点数据
    */
-  const formatNode = (sourceRowItem, rowIndex, siblingIndex, level) => {
-    const targetItem = JSON.parse(JSON.stringify(sourceRowItem));
+  const rowFormat = (sourceRowData, rowIndex, siblingIndex, level) => {
+    const targetItem = JSON.parse(JSON.stringify(sourceRowData));
     // 保留源数据中的 Symbol 属性（如 isRoot、isLeaf 等）
-    const allSymbols = Object.getOwnPropertySymbols(sourceRowItem);
+    const allSymbols = Object.getOwnPropertySymbols(sourceRowData);
     for (const sym of allSymbols) {
-      targetItem[sym] = sourceRowItem[sym];
+      targetItem[sym] = sourceRowData[sym];
     }
     targetItem[Symbol.for('index')] = siblingIndex + 1;
     targetItem[Symbol.for('level')] = level;
-    targetItem[Symbol.for('originalData')] = sourceRowItem;
-    delete targetItem.children;
+    targetItem[Symbol.for('sourceData')] = sourceRowData;
+    targetItem[Symbol.for('formItemDebounceTimer')] = {};
+
+    Reflect.deleteProperty(targetItem, 'children');
     let operaterCol;
 
-    for (const colItem of columns.value) {
+    for (const colItem of _columns.value) {
       const key = colItem.key;
-      const sourceValue = sourceRowItem[key];
+      const sourceValue = sourceRowData[key];
 
       if (colItem.get) {
         if (getVarType(colItem.get) === 'asyncFunction') {
-          colItem.get(sourceValue, rowIndex, sourceRowItem).then((res) => {
+          colItem.get(sourceValue, rowIndex, sourceRowData).then((res) => {
             targetItem[key] = res;
           });
         } else {
-          targetItem[key] = colItem.get(sourceValue, rowIndex, sourceRowItem);
+          targetItem[key] = colItem.get(sourceValue, rowIndex, sourceRowData);
         }
       }
 
-      if (colItem.type === 'formItem') {
-        setFormData(key, sourceValue, sourceRowItem[toValue(rowKeyName)], colItem.formItemConfig);
-        targetItem[Symbol.for('formItemDisable')] = toValue(toValue(formItemActive)) ? false : true;
-
-        if (!targetItem[Symbol.for('formItemDebounceTimer')]) {
-          targetItem[Symbol.for('formItemDebounceTimer')] = { [key]: null };
-        } else {
-          Object.assign(targetItem[Symbol.for('formItemDebounceTimer')], {
-            [key]: null,
-          });
-        }
+      if (formItemTypes.includes(colItem.type)) {
+        setFormData(key, sourceRowData);
+        targetItem[Symbol.for('formItemDisable')] = !formItemActive;
+        targetItem[Symbol.for('formItemDebounceTimer')][key] = null;
       }
 
       if (colItem.type === 'operater') {
@@ -318,7 +386,7 @@ const useRecordList = (
       }
     }
 
-    if (operaterCol?.list) {
+    if (operaterCol) {
       for (const operaterItem of operaterCol.list) {
         if (operaterItem.type !== 'formItemOperater') {
           if (operaterItem.show) {
@@ -338,7 +406,7 @@ const useRecordList = (
               showFn = operaterItem.show;
             }
             targetItem[Symbol.for(`operater-${operaterItem.key}-show`)] = showFn(
-              sourceRowItem,
+              sourceRowData,
               rowIndex
             );
           } else {
@@ -381,18 +449,18 @@ const useRecordList = (
         // 根节点按顶层顺序
         siblingIndex = result.length;
       }
-      const formattedNode = formatNode(node, rowIndex, siblingIndex, level);
+      const rowFormatted = rowFormat(node, rowIndex, siblingIndex, level);
       rowIndex++;
 
       if (parent) {
-        parent.children.push(formattedNode);
+        parent.children.push(rowFormatted);
       } else {
-        result.push(formattedNode);
+        result.push(rowFormatted);
       }
 
       if (node.children && Array.isArray(node.children)) {
         for (let i = node.children.length - 1; i >= 0; i--) {
-          stack.push({ node: node.children[i], parent: formattedNode, level: level + 1 });
+          stack.push({ node: node.children[i], parent: rowFormatted, level: level + 1 });
         }
       }
     }
@@ -404,31 +472,20 @@ const useRecordList = (
    * 获取列表数据
    */
   const _getList = async () => {
-    loading.value = true;
-
-    // 直接使用拉取参数对象作为 getList 入参
-    // getListFnParams 为 reactive，其中 pageNum/pageSize 访问时已解包为普通数值
-    if (getVarType(toValue(getList)) === 'asyncFunction') {
-      toValue(getList)(getListFnParams)
-        // 返回的 list 与状态变量 list 重名会遮蔽，故解构时重命名为 responseList
-        .then(({ list: responseList, total }) => {
-          list.value = listFormat(responseList);
-          totalNum.value = total;
-          emits('listDataGet', { list: responseList, total });
+    const getListFn = toValue(getList);
+    if (getVarType(getListFn) === 'asyncFunction') {
+      loading.value = true;
+      getListFn(getListFnParams)
+        .then(({ list: resList, total }) => {
+          list.value = listFormat(resList);
           restoreSelectedRows();
-        })
-        .catch(() => {
-          emits('listDataGet', { list: [], total: 0 });
         })
         .finally(() => {
           loading.value = false;
         });
     } else {
-      const { list: responseList, total } = toValue(getList)(getListFnParams);
-      list.value = listFormat(responseList);
-      totalNum.value = total;
-      loading.value = false;
-      emits('listDataGet', { list: responseList, total });
+      const { list: resList, total } = getListFn(getListFnParams);
+      list.value = listFormat(resList);
       restoreSelectedRows();
     }
   };
@@ -438,8 +495,8 @@ const useRecordList = (
    * @param {*} keyValue - 行唯一标识值
    * @param {Object} data - 更新的数据
    */
-  const editRowData = (keyValue, data) => {
-    const targetRow = list.value.find((i) => i[toValue(rowKeyName)] === keyValue);
+  const editRowData = (rowKey, data) => {
+    const targetRow = rowKeyToRowMap.value[rowKey];
     if (targetRow) {
       Object.assign(targetRow, data);
     }
@@ -450,24 +507,22 @@ const useRecordList = (
    * @param {Object} columnItem - 列配置
    * @param {Object} rowData - 行数据
    */
-  const exceformItemFn = (columnItem, rowData) => {
-    const index = list.value.findIndex(
-      (i) => i[toValue(rowKeyName)] === rowData[toValue(rowKeyName)]
-    );
-
+  const exceformItemFn = (columnItem, rowKey) => {
+    const index = list.value.findIndex((i) => i[_rowKeyName] === rowKey);
+    const targetRow = rowKeyToRowMap.value[rowKey];
     if (getVarType(columnItem.fn) === 'asyncFunction') {
       columnItem
         .fn(rowData)
         .then((res) => {
           if (columnItem.get) {
             list.value[index][columnItem.key] = columnItem.get(
-              formData.value[rowData[toValue(rowKeyName)]][columnItem.key],
+              formData.value[rowData[_rowKeyName]][columnItem.key],
               index,
               rowData
             );
           } else {
             list.value[index][columnItem.key] =
-              formData.value[rowData[toValue(rowKeyName)]][columnItem.key];
+              formData.value[rowData[_rowKeyName]][columnItem.key];
           }
           if (res?.refreshRecordList) {
             _getList();
@@ -478,7 +533,7 @@ const useRecordList = (
           setFormData(
             columnItem.key,
             rowData[columnItem.key],
-            rowData[toValue(rowKeyName)],
+            rowData[_rowKeyName],
             columnItem.formItemConfig
           );
         });
@@ -501,7 +556,7 @@ const useRecordList = (
     if (!formItemHasOperater && columnItem.fn && !rowData[Symbol.for('formItemDisable')]) {
       if (columnItem.debounce || formItemConfig.type === 'input') {
         // 防抖处理
-        const rowkeyValue = rowData[toValue(rowKeyName)];
+        const rowkeyValue = rowData[_rowKeyName];
         const time = columnItem.debounce || 2000;
         if (rowData[Symbol.for('formItemDebounceTimer')][columnItem.key]) {
           clearTimeout(rowData[Symbol.for('formItemDebounceTimer')][columnItem.key]);
@@ -517,6 +572,88 @@ const useRecordList = (
     }
   };
 
+  const excuteClickFnBackParams = (backParams) => {
+    if (backParams?.message) {
+      uiMessage(backParams.message);
+    }
+    if (backParams?.reloadList) {
+      _getList();
+    }
+  };
+
+  const buttonClickHandle = (itemCfg, sourceRowData) => {
+    if (itemCfg?.onClick) {
+      if (getVarType(itemCfg.onClick) === 'asyncFunction') {
+        itemCfg.onClick(sourceRowData).then((res) => {
+          excuteClickFnBackParams(res);
+        });
+      } else if (getVarType(itemCfg.onClick) === 'function') {
+        const res = itemCfg.onClick(sourceRowData);
+        excuteClickFnBackParams(res);
+      }
+    }
+  };
+
+  const openModalHandle = (itemCfg, sourceRowData) => {
+    emits('openModal', {
+      key: itemCfg.key,
+      data: sourceRowData,
+    });
+  };
+
+  const confirmHandle = (itemCfg, sourceRowData, confirmType) => {
+    if (itemCfg.isPopconfirm) {
+      // 使用 popconfirm 方式
+      switch (payload) {
+        case 'confirm': {
+          if (itemCfg?.confirm?.onClick) {
+            if (getVarType(itemCfg.confirm.onClick) === 'asyncFunction') {
+              itemCfg.confirm.onClick(sourceRowData).then((res) => {
+                excuteClickFnBackParams(res);
+              });
+            } else {
+              const res = itemCfg.confirm.onClick(sourceRowData);
+              excuteClickFnBackParams(res);
+            }
+          }
+          break;
+        }
+        case 'cancel': {
+          if (itemCfg?.cancel?.onClick) {
+            itemCfg.cancel.onClick(sourceRowData);
+          }
+          break;
+        }
+      }
+    } else {
+      // 使用 MessageBox 方式
+      uiMessageBox({
+        title: itemCfg,
+        okButtonText: itemCfg.okButton.text,
+        okButtonClick() {
+          if (getVarType(itemCfg.confirm.onClick) === 'asyncFunction') {
+            itemCfg.confirm.onClick(sourceRowData).then((res) => {
+              excuteClickFnBackParams(res);
+            });
+          } else {
+            const res = itemCfg.confirm.onClick(sourceRowData);
+            excuteClickFnBackParams(res);
+          }
+        },
+        cancelButtonText: itemCfg.cancelButton.text,
+        cancelButtonClick() {
+          itemCfg?.cancel?.onClick?.(sourceRowData);
+        },
+      });
+    }
+  };
+
+  const downloadHandle = (itemCfg, sourceRowData) => {
+    itemCfg.fn(sourceRowData).then((res) => {
+      download(res);
+    });
+  };
+
   /**
    * 操作项事件处理器
    * @param {Object} operaterItem - 操作项配置
@@ -524,110 +661,26 @@ const useRecordList = (
    * @param {*} payload - 附加参数
    */
   const operaterItemEventHandler = (operaterItem, rowData, payload) => {
-    const originalRowData = getOriginalRowData(rowData);
+    const sourceRowData = rowData[Symbol.for('sourceData')];
     switch (operaterItem.type) {
       case 'openModal': {
-        // 打开弹窗（传递原样数据，由弹窗内表单解密展示）
-        emits('openModal', {
-          key: operaterItem.key,
-          data: originalRowData,
-        });
+        // 打开弹窗
+        openModalHandle(operaterItem, sourceRowData);
         break;
       }
       case 'button': {
         // 普通按钮
-        if (operaterItem?.fn) {
-          if (getVarType(operaterItem.fn) === 'asyncFunction') {
-            operaterItem.fn(originalRowData).then(({ refreshRecordList, message: msg } = {}) => {
-              if (msg && typeof message === 'function') {
-                message(msg);
-              }
-              refreshRecordList && _getList();
-            });
-          } else if (getVarType(operaterItem.fn) === 'function') {
-            const res = operaterItem.fn(originalRowData);
-            if (res?.message && typeof message === 'function') {
-              message(res.message);
-            }
-            res?.refreshRecordList && _getList();
-          }
-        }
+        buttonClickHandle(operaterItem, sourceRowData);
         break;
       }
       case 'confirm': {
-        // 确认操作 - 支持两种方式：el-popconfirm 和 ElMessageBox
-        if (operaterItem.isMsgBox) {
-          // 使用 ElMessageBox 方式
-          const noticeMsg = operaterItem?.confirm?.title
-            ? operaterItem?.confirm?.title
-            : `是否确认${operaterItem.text}？`;
-          ElMessageBox.confirm(noticeMsg, '提示', {
-            confirmButtonText: operaterItem.confirm?.text || '确认',
-            cancelButtonText: operaterItem?.cancel?.text || '取消',
-            type: 'warning',
-          })
-            .then(async () => {
-              if (operaterItem?.confirm?.fn) {
-                if (getVarType(operaterItem.confirm.fn) === 'asyncFunction') {
-                  const { refreshRecordList, message: msg } =
-                    await operaterItem.confirm.fn(originalRowData);
-                  if (msg && typeof message === 'function') {
-                    message(msg);
-                  }
-                  refreshRecordList && _getList();
-                } else {
-                  const { refreshRecordList, message: msg } = operaterItem.confirm.fn(rowData);
-                  if (msg && typeof message === 'function') {
-                    message(msg);
-                  }
-                  refreshRecordList && _getList();
-                }
-              }
-            })
-            .catch((err) => {
-              if (err === 'cancel') {
-                operaterItem?.cancel?.fn?.(originalRowData);
-              }
-            });
-        } else {
-          // 使用 el-popconfirm 方式（通过 payload 区分 confirm/cancel）
-          switch (payload) {
-            case 'confirm': {
-              if (operaterItem?.confirm.fn) {
-                if (getVarType(operaterItem.confirm.fn) === 'asyncFunction') {
-                  operaterItem.confirm
-                    .fn(originalRowData)
-                    .then(({ refreshRecordList, message: msg }) => {
-                      if (msg && typeof message === 'function') {
-                        message(msg);
-                      }
-                      refreshRecordList && _getList();
-                    });
-                } else {
-                  const { refreshRecordList, message: msg } = operaterItem.confirm.fn(rowData);
-                  if (msg && typeof message === 'function') {
-                    message(msg);
-                  }
-                  refreshRecordList && _getList();
-                }
-              }
-              break;
-            }
-            case 'cancel': {
-              if (operaterItem?.cancel?.fn) {
-                operaterItem.cancel.fn(originalRowData);
-              }
-              break;
-            }
-          }
-        }
+        // 确认操作 - 支持两种方式：popconfirm 和 messageBox
+        confirmHandle(operaterItem, sourceRowData, payload);
         break;
       }
       case 'download': {
         // 下载操作
-        operaterItem.fn(originalRowData).then(({ url, name }) => {
-          download({ url, name });
-        });
+        downloadHandle(operaterItem, sourceRowData);
         break;
       }
       case 'formItemOperater': {
@@ -635,52 +688,45 @@ const useRecordList = (
         const operateType = payload;
         if (operateType === 'entry') {
           // 进入编辑模式
-          editRowData(rowData[toValue(rowKeyName)], {
+          editRowData(rowData[_rowKeyName], {
             [Symbol.for('formItemDisable')]: false,
           });
         } else if (operateType === 'exit') {
           // 退出编辑模式
-          editRowData(rowData[toValue(rowKeyName)], {
+          editRowData(rowData[_rowKeyName], {
             [Symbol.for('formItemDisable')]: true,
           });
           // 恢复原始数据
-          for (const formItemKey of Object.keys(
-            formData.value[rowData[toValue(rowKeyName)]]
-          )) {
+          for (const formItemKey of Object.keys(formData.value[rowData[_rowKeyName]])) {
             setFormData(
               formItemKey,
               rowData[formItemKey],
-              rowData[toValue(rowKeyName)],
-              columns.value.find((i) => i.key === formItemKey).formItemConfig
+              rowData[_rowKeyName],
+              _columns.value.find((i) => i.key === formItemKey).formItemConfig
             );
           }
         } else if (operateType === 'submit') {
           // 提交表单
-          editRowData(rowData[toValue(rowKeyName)], {
+          editRowData(rowData[_rowKeyName], {
             [Symbol.for('operater-formItemOperater-loading')]: true,
           });
           operaterItem
-            .fn(originalRowData)
+            .fn(sourceRowData)
             .then((resetList) => {
               const newRowData = {};
-              for (const formItemKey of Object.keys(
-                formData.value[rowData[toValue(rowKeyName)]]
-              )) {
-                newRowData[formItemKey] =
-                  formData.value[rowData[toValue(rowKeyName)]][formItemKey];
+              for (const formItemKey of Object.keys(formData.value[rowData[_rowKeyName]])) {
+                newRowData[formItemKey] = formData.value[rowData[_rowKeyName]][formItemKey];
               }
-              resetList ? _getList() : editRowData(rowData[toValue(rowKeyName)], newRowData);
+              resetList ? _getList() : editRowData(rowData[_rowKeyName], newRowData);
             })
             .catch(() => {
               // 恢复原始数据
-              for (const formItemKey of Object.keys(
-                formData.value[rowData[toValue(rowKeyName)]]
-              )) {
+              for (const formItemKey of Object.keys(formData.value[rowData[_rowKeyName]])) {
                 setFormData(
                   formItemKey,
                   rowData[formItemKey],
-                  rowData[toValue(rowKeyName)],
-                  columns.value.find((i) => i.key === formItemKey).formItemConfig
+                  rowData[_rowKeyName],
+                  _columns.value.find((i) => i.key === formItemKey).formItemConfig
                 );
               }
             })
@@ -699,39 +745,33 @@ const useRecordList = (
    * @param {Object} columnConfig - 列配置
    * @param {Object} rowData - 行数据
    */
-  const columnEventHandler = (columnConfig, rowData) => {
+  const columnEventHandler = (columnConfig, rowData, payload) => {
+    const sourceRowData = rowData[Symbol.for('sourceData')];
     switch (columnConfig.type) {
-      case 'viewDetail': {
-        // 查看详情
-        if (!columnConfig.openType || columnConfig.openType === 'modal') {
-          emits('openModal', {
-            key: columnConfig.modalKey,
-            data: getOriginalRowData(rowData),
-          });
-        } else if (columnConfig.openType === 'window') {
-          columnConfig.fn(rowData).then(({ url, name, param }) => {
-            window.open(url, name, param);
-          });
-        }
+      case 'button': {
+        // 普通按钮
+        buttonClickHandle(operaterItem, sourceRowData);
+        break;
+      }
+      case 'confirm': {
+        // 确认操作 - 支持两种方式：popconfirm 和 messageBox
+        confirmHandle(operaterItem, sourceRowData, payload);
         break;
       }
       case 'download': {
         // 下载文件
-        columnConfig.fn(rowData).then(({ url, name }) => {
-          download({ url, name });
-        });
+        downloadHandle(columnConfig, sourceRowData);
         break;
       }
       case 'openModal': {
         // 打开弹窗（仿照 operaterItem 中的 openModal 类型，传递原样数据）
-        emits('openModal', {
-          key: columnConfig.key,
-          data: getOriginalRowData(rowData),
-        });
+        openModalHandle(columnConfig, sourceRowData);
         break;
       }
     }
   };
+
+  const clearSelectRows = () => {};
 
   /**
    * 用搜索传入的参数更新 getListFnParams
@@ -773,10 +813,27 @@ const useRecordList = (
    * @param {Object} [params.sorterParams] - 排序参数，传 null 清空
    * @param {Object} [params.extraParams] - 额外参数（持久化），传 null 清空
    */
-  const search = async (params = {}) => {
+  const getListBySearchParams = async (searchParams) => {
+    if (searchParams) {
+      updateGetListFnParams(searchParams);
+    }
+    getListFnParams.pageParams.pageNum = 1;
     toValue(selectMode) && emits('clearBatch');
-    // 只更新本次传入的参数，未传入的参数保持原值
-    updateGetListFnParams(params);
+    await _getList();
+  };
+
+  const getListByPageParams = async (papeParams) => {
+    if (papeParams) {
+      if (pageParams?.pageNum) {
+        getListFnParams.pageParams.pageNum = pageParams.pageNum;
+      }
+      if (pageParams?.pageSize) {
+        if (pageParams.pageSize != getListFnParams.pageParams.pageSize) {
+          getListFnParams.pageParams.pageSize = pageParams.pageSize;
+          toValue(selectMode) && emits('clearBatch');
+        }
+      }
+    }
     await _getList();
   };
 
@@ -822,11 +879,7 @@ const useRecordList = (
   // 返回状态和方法集合
   return {
     list,
-    columns,
-    pageNum,
-    pageSize,
-    totalNum,
-    loading,
+    _columns,
     formData,
     formItemInputEventHandler,
     operaterItemEventHandler,

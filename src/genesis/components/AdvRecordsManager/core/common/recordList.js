@@ -54,16 +54,15 @@ const recordListProps = {
     type: Array,
     default: () => [],
   },
+  modalRef: {
+    type: Object,
+  },
 };
 
 /**
  * 表格列表组件事件定义
  */
 const recordListEmits = [
-  'getPageBatchList', // 获取批量列表（切换分页时）
-  'selectRows', // 选中行事件
-  'clearBatch', // 清除批量选择
-  'openModal', // 打开弹窗
   'getToolBarParams', // 获取工具栏参数
   'update:selectedRowsKey', // 更新选中行列表
 ];
@@ -119,17 +118,22 @@ const useRecordList = ({
   uiMessageBox,
   renderSelectedRowCallback,
 }) => {
-  const { getList, columns, rowKeyName, formItemActive } = props;
+  const { rowKeyName, formItemActive, getList } = props;
+  const { columns, modalRef } = toRefs(props);
 
   // 表格数据列表（列配置）
-  const _columns = columns.map((sourceCol) => columnCfgFormat(sourceCol));
-  const colKeyToCfgMap = Object.fromEntries(_columns.map((i) => [i.key, i]));
+  const _columns = computed(() => {
+    return columns.value.map((sourceCol) => columnCfgFormat(sourceCol));
+  });
+  const colKeyToCfgMap = computed(() => {
+    return Object.fromEntries(_columns.value.map((i) => [i.key, i]));
+  });
   // 表格数据列表
   const list = ref([]);
   const rowKeyToRowMap = computed(() => {
     const map = {};
     for (const item of list.value) {
-      map[item[_rowKeyName]] = item;
+      map[item[rowKeyName]] = item;
     }
     return map;
   });
@@ -156,12 +160,14 @@ const useRecordList = ({
     // 其他参数（由 search 的 extraParams 更新）
     extraParams: null,
   };
-
-  const _rowKeyName = toValue(rowKeyName);
   // 加载状态
   const loading = ref(false);
   // 表单数据（用于可编辑列）
   const formData = ref({});
+  const formRef = shallowRef();
+  const setFormRef = (ref) => {
+    formRef.value = ref;
+  };
   // 是否有表单操作列
   let formItemHasOperater = false;
 
@@ -194,12 +200,12 @@ const useRecordList = ({
 
   const selectRowHandle = (currentPageSelectedRows, currentToggleRow) => {
     const currentRowChecked = currentPageSelectedRows.find(
-      (row) => row[_rowKeyName] === currentToggleRow[_rowKeyName]
+      (row) => row[rowKeyName] === currentToggleRow[rowKeyName]
     );
     if (currentRowChecked) {
-      selectedRowsKey.add(currentToggleRow[_rowKeyName]);
+      selectedRowsKey.add(currentToggleRow[rowKeyName]);
     } else {
-      selectedRowsKey.delete(currentToggleRow[_rowKeyName]);
+      selectedRowsKey.delete(currentToggleRow[rowKeyName]);
     }
     isUserSelect = true;
     emits('update:selectedRowsKey', getAllSelectedRowsKey());
@@ -208,11 +214,11 @@ const useRecordList = ({
   const selectAllRowsHandle = (currentPageToggleRows) => {
     if (currentPageToggleRows?.length) {
       for (const row of currentPageToggleRows) {
-        selectedRowsKey.add(row[_rowKeyName]);
+        selectedRowsKey.add(row[rowKeyName]);
       }
     } else {
       for (const row of list.value) {
-        selectedRowsKey.delete(row[_rowKeyName]);
+        selectedRowsKey.delete(row[rowKeyName]);
       }
     }
     isUserSelect = true;
@@ -226,7 +232,7 @@ const useRecordList = ({
    */
   const restoreSelectedRows = () => {
     if (selectMode.value) {
-      const matchedRows = list.value.filter((row) => selectedRowsKey.has(row[_rowKeyName]));
+      const matchedRows = list.value.filter((row) => selectedRowsKey.has(row[rowKeyName]));
       if (matchedRows.length) {
         nextTick(() => {
           renderSelectedRowCallback(matchedRows);
@@ -242,7 +248,7 @@ const useRecordList = ({
         if (newV?.length) {
           selectedRowsKey.clear();
           for (const row of newV) {
-            selectedRowsKey.add(row[_rowKeyName]);
+            selectedRowsKey.add(row[rowKeyName]);
           }
         } else {
           selectedRowsKey.clear();
@@ -328,14 +334,10 @@ const useRecordList = ({
    * @param {*} rowKeyValue - 行唯一标识值
    * @param {Object} formConfig - 表单配置
    */
-  const setFormData = (key, sourceRowData) => {
-    const data = sourceRowData[key];
-    const rowKey = sourceRowData[_rowKeyName];
-    if (!formData.value[rowKey]) {
-      formData.value[rowKey] = { [key]: data };
-    } else {
-      formData.value[rowKey][key] = data;
-    }
+  const setFormData = (colKey, sourceRowData) => {
+    const data = sourceRowData[colKey];
+    const rowKey = sourceRowData[rowKeyName];
+    formData.value[rowKey][colKey] = data;
   };
 
   /**
@@ -353,10 +355,12 @@ const useRecordList = ({
     for (const sym of allSymbols) {
       targetItem[sym] = sourceRowData[sym];
     }
+    const rowKey = sourceRowData[rowKeyName];
     targetItem[Symbol.for('index')] = siblingIndex + 1;
     targetItem[Symbol.for('level')] = level;
     targetItem[Symbol.for('sourceData')] = sourceRowData;
     targetItem[Symbol.for('formItemDebounceTimer')] = {};
+    targetItem[Symbol.for('formItemOperaterSubmitLoading')] = false;
 
     Reflect.deleteProperty(targetItem, 'children');
     let operaterCol;
@@ -376,6 +380,7 @@ const useRecordList = ({
       }
 
       if (formItemTypes.includes(colItem.type)) {
+        formData.value[rowKey] = {};
         setFormData(key, sourceRowData);
         targetItem[Symbol.for('formItemDisable')] = !formItemActive;
         targetItem[Symbol.for('formItemDebounceTimer')][key] = null;
@@ -415,7 +420,7 @@ const useRecordList = ({
         } else {
           targetItem[Symbol.for(`operater-${operaterItem.key}-show`)] = true;
           formItemHasOperater = true;
-          targetItem[Symbol.for('operater-formItemOperater-loading')] = false;
+          targetItem[Symbol.for('formItemOperaterSubmitLoading')] = false;
         }
       }
     }
@@ -508,21 +513,22 @@ const useRecordList = ({
    * @param {Object} rowData - 行数据
    */
   const exceformItemFn = (columnItem, rowKey) => {
-    const index = list.value.findIndex((i) => i[_rowKeyName] === rowKey);
-    const targetRow = rowKeyToRowMap.value[rowKey];
-    if (getVarType(columnItem.fn) === 'asyncFunction') {
+    const index = list.value.findIndex((i) => i[rowKeyName] === rowKey);
+    const targetRowData = rowKeyToRowMap.value[rowKey];
+    const targetSourceRowData = targetRowData[Symbol.for('sourceData')];
+    if (getVarType(columnItem.onChange) === 'asyncFunction') {
+      const targetRowFormData = formData.value[rowKey];
       columnItem
-        .fn(rowData)
+        .onChange(targetRowFormData[columnItem.key], targetRowFormData, targetSourceRowData)
         .then((res) => {
           if (columnItem.get) {
             list.value[index][columnItem.key] = columnItem.get(
-              formData.value[rowData[_rowKeyName]][columnItem.key],
+              formData.value[rowData[rowKeyName]][columnItem.key],
               index,
               rowData
             );
           } else {
-            list.value[index][columnItem.key] =
-              formData.value[rowData[_rowKeyName]][columnItem.key];
+            list.value[index][columnItem.key] = formData.value[rowData[rowKeyName]][columnItem.key];
           }
           if (res?.refreshRecordList) {
             _getList();
@@ -533,7 +539,7 @@ const useRecordList = ({
           setFormData(
             columnItem.key,
             rowData[columnItem.key],
-            rowData[_rowKeyName],
+            rowData[rowKeyName],
             columnItem.formItemConfig
           );
         });
@@ -556,7 +562,7 @@ const useRecordList = ({
     if (!formItemHasOperater && columnItem.fn && !rowData[Symbol.for('formItemDisable')]) {
       if (columnItem.debounce || formItemConfig.type === 'input') {
         // 防抖处理
-        const rowkeyValue = rowData[_rowKeyName];
+        const rowkeyValue = rowData[rowKeyName];
         const time = columnItem.debounce || 2000;
         if (rowData[Symbol.for('formItemDebounceTimer')][columnItem.key]) {
           clearTimeout(rowData[Symbol.for('formItemDebounceTimer')][columnItem.key]);
@@ -595,7 +601,7 @@ const useRecordList = ({
   };
 
   const openModalHandle = (itemCfg, sourceRowData) => {
-    emits('openModal', {
+    modalRef.value.openModal({
       key: itemCfg.key,
       data: sourceRowData,
     });
@@ -654,6 +660,32 @@ const useRecordList = ({
     });
   };
 
+  const updateRowData = (rowKey, updateData) => {
+    const targetRowData = rowKeyToRowMap.value[rowKey];
+    if (targetRowData) {
+      const targetRowSourceData = targetRowData[Symbol.for('sourceData')];
+      for (const colKey of Object.keys(updateData)) {
+        if (Reflect.has(targetRowData, colKey)) {
+          const colCfg = colKeyToCfgMap.value[colKey];
+          targetRowSourceData[colKey] = updateData[colKey];
+          if (colCfg?.get) {
+            if (getVarType(colCfg.get) === 'asyncFunction') {
+              colCfg.get(targetRowSourceData).then((res) => {
+                targetRowData[colKey] = res;
+              });
+            } else {
+              targetRowData[colKey] = colCfg.get(targetRowSourceData);
+            }
+          } else {
+            targetRowData[colKey] = updateData[colKey];
+          }
+        }
+      }
+    }
+
+    formData.value[rowKey] = updateData;
+  };
+
   /**
    * 操作项事件处理器
    * @param {Object} operaterItem - 操作项配置
@@ -686,53 +718,54 @@ const useRecordList = ({
       case 'formItemOperater': {
         // 表单操作器
         const operateType = payload;
+        const rowKey = rowData[rowKeyName];
         if (operateType === 'entry') {
           // 进入编辑模式
-          editRowData(rowData[_rowKeyName], {
+          editRowData(rowKey, {
             [Symbol.for('formItemDisable')]: false,
           });
         } else if (operateType === 'exit') {
           // 退出编辑模式
-          editRowData(rowData[_rowKeyName], {
+          const currentRowFormData = formData.value[rowKey];
+          // 恢复原始数据
+          for (const colKey of Object.keys(currentRowFormData)) {
+            setFormData(colKey, sourceRowData[colKey]);
+          }
+          editRowData(rowKey, {
             [Symbol.for('formItemDisable')]: true,
           });
-          // 恢复原始数据
-          for (const formItemKey of Object.keys(formData.value[rowData[_rowKeyName]])) {
-            setFormData(
-              formItemKey,
-              rowData[formItemKey],
-              rowData[_rowKeyName],
-              _columns.value.find((i) => i.key === formItemKey).formItemConfig
-            );
-          }
         } else if (operateType === 'submit') {
           // 提交表单
-          editRowData(rowData[_rowKeyName], {
-            [Symbol.for('operater-formItemOperater-loading')]: true,
+          editRowData(rowKey, {
+            [Symbol.for('formItemOperaterSubmitLoading')]: true,
           });
+          const currentRowFormData = formData.value[rowKey];
+          // 转换表单数据
+          const currentRowTransFormData = {};
+          for (const colKey of Object.keys(currentRowFormData)) {
+            const colCfg = colKeyToCfgMap.value[colKey];
+            if (colCfg?.set) {
+              currentRowTransFormData[colKey] = colCfg.set(currentRowFormData[colKey]);
+            } else {
+              currentRowTransFormData[colKey] = currentRowFormData[colKey];
+            }
+          }
           operaterItem
-            .fn(sourceRowData)
-            .then((resetList) => {
-              const newRowData = {};
-              for (const formItemKey of Object.keys(formData.value[rowData[_rowKeyName]])) {
-                newRowData[formItemKey] = formData.value[rowData[_rowKeyName]][formItemKey];
-              }
-              resetList ? _getList() : editRowData(rowData[_rowKeyName], newRowData);
+            .onClick(currentRowTransFormData, sourceRowData)
+            .then((res) => {
+              //请求成功，更新行数据和表单数据
+              updateRowData(rowKey, res.data);
+              excuteClickFnBackParams(res);
             })
             .catch(() => {
-              // 恢复原始数据
-              for (const formItemKey of Object.keys(formData.value[rowData[_rowKeyName]])) {
-                setFormData(
-                  formItemKey,
-                  rowData[formItemKey],
-                  rowData[_rowKeyName],
-                  _columns.value.find((i) => i.key === formItemKey).formItemConfig
-                );
+              // 请求失败，恢复原始数据
+              for (const colKey of Object.keys(currentRowFormData)) {
+                setFormData(colKey, sourceRowData[colKey]);
               }
             })
             .finally(() => {
               rowData[Symbol.for('formItemDisable')] = true;
-              rowData[Symbol.for('operater-formItemOperater-loading')] = false;
+              rowData[Symbol.for('formItemOperaterSubmitLoading')] = false;
             });
         }
         break;
@@ -770,8 +803,6 @@ const useRecordList = ({
       }
     }
   };
-
-  const clearSelectRows = () => {};
 
   /**
    * 用搜索传入的参数更新 getListFnParams
@@ -818,7 +849,6 @@ const useRecordList = ({
       updateGetListFnParams(searchParams);
     }
     getListFnParams.pageParams.pageNum = 1;
-    toValue(selectMode) && emits('clearBatch');
     await _getList();
   };
 
@@ -830,34 +860,11 @@ const useRecordList = ({
       if (pageParams?.pageSize) {
         if (pageParams.pageSize != getListFnParams.pageParams.pageSize) {
           getListFnParams.pageParams.pageSize = pageParams.pageSize;
-          toValue(selectMode) && emits('clearBatch');
         }
       }
     }
     await _getList();
   };
-
-  /**
-   * 监听页码变化
-   */
-  watch(pageNum, (newVal) => {
-    if (toValue(selectMode)) {
-      emits('getPageBatchList', newVal);
-    }
-    _getList();
-  });
-
-  /**
-   * 监听每页条数变化
-   */
-  watch(pageSize, () => {
-    toValue(selectMode) && emits('clearBatch');
-    if (pageNum.value !== 1) {
-      pageNum.value = 1;
-    } else {
-      _getList();
-    }
-  });
 
   /**
    * 初始化：加载数据
@@ -868,12 +875,10 @@ const useRecordList = ({
    * 暴露给父组件的方法配置
    */
   const defineExposeConfig = {
-    search,
+    getListBySearchParams,
+    getListByPageParams,
     setCurrentPageSelectedRows,
-    /**
-     * 刷新列表（保持当前页码不变）
-     */
-    refreshList: _getList,
+    refreshList: _getList, //刷新列表（保持当前列表参数不变）
   };
 
   // 返回状态和方法集合

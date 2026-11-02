@@ -899,5 +899,132 @@ const useRecordList = ({
   };
 };
 
+// 列表批量选中功能
+/*
+        <el-button
+          v-if="!selectMode"
+          v-hasPermi="['dataManagement:driverInfo:export']"
+          type="warning"
+          plain
+          icon="Upload"
+          @click="entrySelectMode"
+        >
+          批量导入
+        </el-button>
+        <template v-else>
+          <el-button-group>
+            <el-button
+              type="primary"
+              plain
+              :disabled="!selectedRowsKey.length"
+              icon="Check"
+              @click="confirmSelect"
+            >
+              确定
+            </el-button>
+            <el-button
+              plain
+              icon="Close"
+              @click="exitSelectMode"
+            >
+              取消
+            </el-button>
+          </el-button-group>
+        </template>
+*/
+const useElTableSelect = (tableList, elTableRef, rowKeyName = 'id') => {
+  const selectMode = ref(false);
+  const _selectedRowsKey = ref(new Set());
+  const selectedRowsKey = computed(() => [..._selectedRowsKey.value]);
+  let isUserSelect = false;
+
+  // 获取所有页码的选中行唯一标识
+  const getAllSelectedRowsKey = () => {
+    return [..._selectedRowsKey.value];
+  };
+
+  // 进入选择模式
+  const entrySelectMode = () => {
+    selectMode.value = true;
+  };
+
+  // 退出选择模式(清空所有选中行状态)
+  const exitSelectMode = () => {
+    const selectedRows = getAllSelectedRowsKey();
+    _selectedRowsKey.value.clear();
+    restoreSelectedRows();
+    selectMode.value = false;
+    return selectedRows;
+  };
+
+  // 选中行处理（单行）
+  const selectRowHandle = (currentPageSelectedRows, currentToggleRow) => {
+    const currentRowChecked = currentPageSelectedRows.find(
+      (row) => row[rowKeyName] === currentToggleRow[rowKeyName]
+    );
+    if (currentRowChecked) {
+      _selectedRowsKey.value.add(currentToggleRow[rowKeyName]);
+    } else {
+      _selectedRowsKey.value.delete(currentToggleRow[rowKeyName]);
+    }
+    isUserSelect = true;
+  };
+
+  // 选中行处理（全选）
+  const selectAllRowsHandle = (currentPageToggleRows) => {
+    if (currentPageToggleRows?.length) {
+      for (const row of currentPageToggleRows) {
+        _selectedRowsKey.value.add(row[rowKeyName]);
+      }
+    } else {
+      for (const row of toValue(tableList)) {
+        _selectedRowsKey.value.delete(row[rowKeyName]);
+      }
+    }
+    isUserSelect = true;
+  };
+
+  // 数据加载完成后恢复选中行状态
+  const restoreSelectedRows = () => {
+    if (selectMode.value) {
+      nextTick(() => {
+        for (const row of toValue(tableList)) {
+          if (_selectedRowsKey.value.has(row[rowKeyName])) {
+            toValue(elTableRef).toggleRowSelection(row, true);
+          } else {
+            toValue(elTableRef).toggleRowSelection(row, false);
+          }
+        }
+      });
+    }
+  };
+
+  watch(selectedRowsKey, (newV, oldV) => {
+    if (selectMode.value && !isUserSelect) {
+      if (newV?.length) {
+        _selectedRowsKey.value.clear();
+        for (const row of newV) {
+          _selectedRowsKey.value.add(row[rowKeyName]);
+        }
+      } else {
+        _selectedRowsKey.value.clear();
+      }
+      restoreSelectedRows();
+    }
+    isUserSelect = false;
+  });
+
+  return {
+    selectMode,
+    selectedRowsKey,
+    entrySelectMode,
+    exitSelectMode,
+    getAllSelectedRowsKey,
+    selectRowHandle,
+    selectAllRowsHandle,
+    restoreSelectedRows,
+  };
+};
+
 // 导出属性、事件和方法
 export { recordListProps, recordListEmits, useRecordList };

@@ -155,3 +155,102 @@ export function cleanObject(sourceInfo, setter) {
   }
   return targetInfo;
 }
+
+/**
+ * 同步管道处理器
+ */
+class SyncPipeline {
+  /**
+   * @param {Object|Map} steps - 流程方法集合，如 { key1: fn1, key2: fn2 }
+   * @param {string[]} [order] - 执行顺序数组，不传则按注册先后顺序
+   */
+  constructor(steps = {}, order) {
+    this.steps = new Map();
+
+    // 兼容 Map 和普通对象
+    if (steps instanceof Map) {
+      this.steps = new Map(steps);
+    } else {
+      for (const [key, handler] of Object.entries(steps)) {
+        this.steps.set(key, handler);
+      }
+    }
+
+    // 确定执行顺序
+    this.order = order ? [...order] : [...this.steps.keys()];
+
+    // 校验顺序中的 key 是否都已注册
+    for (const key of this.order) {
+      if (!this.steps.has(key)) {
+        throw new Error(`流程顺序中的步骤 "${key}" 未注册`);
+      }
+    }
+  }
+
+  /**
+   * 执行管道
+   * @param {*} initialValue - 初始值
+   * @returns {*} 最终结果
+   */
+  execute(initialValue) {
+    let current = initialValue;
+
+    for (const key of this.order) {
+      const handler = this.steps.get(key);
+      const result = handler(current);
+
+      // 如果返回了 { done: true }，提前终止并返回当前 value
+      if (result && typeof result === 'object' && result.done === true) {
+        return result.value;
+      }
+
+      // 提取 value 继续下一步（兼容未严格返回 {value} 格式的情况）
+      current = result && typeof result === 'object' && 'value' in result ? result.value : result;
+    }
+
+    return current;
+  }
+}
+
+/**
+ * 异步管道处理器（支持同步和异步方法混用，整体执行异步）
+ */
+class AsyncPipeline {
+  constructor(steps = {}, order) {
+    this.steps = new Map();
+
+    if (steps instanceof Map) {
+      this.steps = new Map(steps);
+    } else {
+      for (const [key, handler] of Object.entries(steps)) {
+        this.steps.set(key, handler);
+      }
+    }
+
+    this.order = order ? [...order] : [...this.steps.keys()];
+
+    for (const key of this.order) {
+      if (!this.steps.has(key)) {
+        throw new Error(`流程顺序中的步骤 "${key}" 未注册`);
+      }
+    }
+  }
+
+  async execute(initialValue) {
+    let current = initialValue;
+
+    for (const key of this.order) {
+      const handler = this.steps.get(key);
+      // await 可以同时兼容同步和异步方法
+      const result = await handler(current);
+
+      if (result && typeof result === 'object' && result.done === true) {
+        return result.value;
+      }
+
+      current = result && typeof result === 'object' && 'value' in result ? result.value : result;
+    }
+
+    return current;
+  }
+}

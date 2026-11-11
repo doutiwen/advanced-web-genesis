@@ -95,6 +95,21 @@ const useAdvForm = (
 
   const _config = toValue(config);
 
+  // 收集 props.config.list 中配置过的表单项 key（兼容一维 / 二维配置），
+  // 用于过滤回填数据中未在本表单配置过的字段——setFormData 回填与 modelValue 双向绑定共用此集合
+  const getConfiguredFormItemKeySet = () => {
+    const configuredKeySet = new Set();
+    for (const rowConfig of _config?.list ?? []) {
+      const rowFormItems = Array.isArray(rowConfig) ? rowConfig : [rowConfig];
+      for (const formItemConfig of rowFormItems) {
+        if (formItemConfig?.key != null) {
+          configuredKeySet.add(String(formItemConfig.key));
+        }
+      }
+    }
+    return configuredKeySet;
+  };
+
   // 表单项是否配置了数据变换（同时存在 get/set）
   const formItemHasDataTransform = (key) => {
     const formItemConfig = formItemDict.value[key];
@@ -107,7 +122,10 @@ const useAdvForm = (
     modelValue,
     (n, o) => {
       if (n) {
+        const configuredKeySet = getConfiguredFormItemKeySet();
         for (const [key, val] of Object.entries(n)) {
+          // 未在 props.config.list 中配置的 key 不属于本表单表单项，跳过不写入
+          if (!configuredKeySet.has(String(key))) continue;
           // 数据变换（set/get）只在 setFormData / submit 中应用，modelValue 直接赋值
           currentInputKey = key;
           formDataState[key] = val;
@@ -481,7 +499,7 @@ const useAdvForm = (
     } else {
       if (Array.isArray(result)) {
         formEleComponentOptionsInfo[key].value = result;
-      } else if (typeof result === 'object' && Reflect.has(result, 'value') && result?.options) {
+      } else if (typeof result === 'object' && result?.value && result?.options) {
         // 字段已被回填且联动源未被用户改动时，仅更新选项、不写回字段值，保护后端值
         if (!shouldSuppressWatchValueWrite(key)) {
           updateFormDataState(key, result.value);
@@ -794,13 +812,13 @@ const useAdvForm = (
         if (getVarType(sourceFormItem.options) === 'asyncFunction') {
           const getOptionsFn = sourceFormItem.options;
           getOptionsFn(formDataState).then((res) => {
-            formEleComponentOptionsInfo[formItemKey].value = res;
+            parsingOptionsResult(formItemKey, res);
           });
         } else if (getVarType(sourceFormItem.options) === 'function') {
           const getOptionsFn = sourceFormItem.options;
-          formEleComponentOptionsInfo[formItemKey].value = getOptionsFn(formDataState);
+          parsingOptionsResult(formItemKey, getOptionsFn(formDataState));
         } else if (getVarType(sourceFormItem.options) === 'array') {
-          formEleComponentOptionsInfo[formItemKey].value = sourceFormItem.options;
+          parsingOptionsResult(formItemKey, sourceFormItem.options);
         }
       }
     }
@@ -1142,10 +1160,13 @@ const useAdvForm = (
 
   // 回填表单数据：赋值期间暂时停用 value / options 类型 watch，并开启“回填值保护”，避免覆盖本次回填数据
   const setFormData = (formData) => {
+    const configuredKeySet = getConfiguredFormItemKeySet();
     // 开启新一轮回填保护：以本次显式提供的字段 key 作为受保护集合，并清空上一轮的用户改动记录
     externallyProvidedKeys.clear();
     userInputKeys.clear();
     for (const providedKey of Object.keys(formData)) {
+      // 未在 props.config.list 中配置的 key 不属于本表单，跳过（不纳入回填值保护集合）
+      if (!configuredKeySet.has(String(providedKey))) continue;
       externallyProvidedKeys.add(providedKey);
     }
     // 回填期间暂时停用 value（动态计算字段值）与 options（动态选项）两类联动 watch：
@@ -1160,6 +1181,8 @@ const useAdvForm = (
       watchManager.pauseWatch(`${formItemKey}-options`);
     }
     for (const [key, val] of Object.entries(formData)) {
+      // 未在 props.config.list 中配置的 key 不属于本表单表单项，跳过不写入表单数据
+      if (!configuredKeySet.has(String(key))) continue;
       const formItem = formItemDict.value[key];
       // 空值不回填：后端返回 undefined / null / 空字符串时，若该表单项配置了 defaultValue，
       // 则保留 initForm（setFormDataState）阶段写入的默认值，避免回填把默认值清空——

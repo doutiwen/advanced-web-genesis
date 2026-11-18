@@ -343,23 +343,19 @@
                 return option.label.includes(input);
               },
             },
-            // show: "checkDepartment!='2'", //表单项显示条件的三种写法
-            // show: 'checkDepartment',
-            // show: {
-            //   watchKeys: ['checkDepartment'],
-            //   handle({ checkDepartment }) {
-            //     return checkDepartment !== '2';
-            //   },
-            // },
+            // 表单项显隐联动：watch 数组写法
+            // watch: [
+            //   { on: ['checkDepartment'], show: ({ checkDepartment }) => checkDepartment !== '2' },
+            // ],
           },
           {
             key: 'checkLocation',
             type: 'input',
             label: '检查地点',
-            validate: {
-              watch: {
-                keys: ['department'],
-                handle({ department }) {
+            watch: [
+              {
+                on: ['department'],
+                validate: ({ department }) => {
                   if (department === '1') {
                     return [{ type: 'number' }];
                   } else {
@@ -367,7 +363,7 @@
                   }
                 },
               },
-            },
+            ],
           },
           {
             key: 'hazardContent',
@@ -382,18 +378,20 @@
             key: 'hazardLevel',
             type: 'select',
             label: '隐患级别',
-            options: {
-              watchKeys: ['department'],
-              async handle({ department }) {
-                if (department === '1') {
-                  const res = await openApi({ api: 'example/getLevel' });
-                  return res.data;
-                } else {
-                  const res = await asyncDictionaryManager.getData('hazardCategory');
-                  return res.data;
-                }
+            watch: [
+              {
+                on: ['department'],
+                options: async ({ department }) => {
+                  if (department === '1') {
+                    const res = await openApi({ api: 'example/getLevel' });
+                    return res.data;
+                  } else {
+                    const res = await asyncDictionaryManager.getData('hazardCategory');
+                    return res.data;
+                  }
+                },
               },
-            },
+            ],
             validate: [{ type: 'required' }],
           },
           {

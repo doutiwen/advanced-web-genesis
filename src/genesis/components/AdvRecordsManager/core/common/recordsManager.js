@@ -399,6 +399,13 @@ const useRecordsManager = (props, attrs, emits) => {
     refreshList: (tempParams) => {
       return recordListRef.value.refreshList(tempParams);
     },
+    /**
+     * 清除批量选择状态
+     */
+    clearBatch: () => {
+      toolBarRef.value.clearBatchModeState();
+      recordListRef.value.clearSelectedRows();
+    },
   };
 
   // 返回状态和方法集合

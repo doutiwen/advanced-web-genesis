@@ -33,5 +33,11 @@
     submit: (...args) => advFormCoreRef.value?.submit(...args),
     clearFormData: (...args) => advFormCoreRef.value?.clearFormData(...args),
     setFormData: (...args) => advFormCoreRef.value?.setFormData(...args),
+    updateFormData: (...args) => advFormCoreRef.value?.updateFormData(...args),
+    getFormData: (...args) => advFormCoreRef.value?.getFormData(...args),
+    // 只读表单数据：转发核心组件的 readonly(formDataState)，供外部 watch 指定字段
+    get formData() {
+      return advFormCoreRef.value?.formData;
+    },
   });
 </script>

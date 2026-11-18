@@ -122,9 +122,7 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
   };
 
   /**
-   * 显式调用表单的 setFormData()，触发 encrypt 字段的 set 解密（还原明文）
-   * AdvForm 的 set 变换仅在显式调用 setFormData() 时触发，modelValue 绑定不会触发；
-   * 弹窗以原样数据（密文）打开时，需显式调用 setFormData() 才能在表单中展示明文。
+   * 调用表单的 setFormData() 载入数据（触发表单项的 set 变换）
    * 传入的是 getData / openModal payload 的载入数据，不是 bindFormData
    * （bindFormData 仅作组件内部 watch 的实时镜像，不作载入载体）
    * @param {Object} formData - 弹窗表单载入数据
@@ -202,8 +200,8 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
     } else {
       if (props.config?.form) {
         // bindFormData 仅作组件内部 watch 的实时镜像：每次打开重置为空对象，
-        // 其值只由用户编辑经 v-model 回写累积，不承载 getData / payload 的载入数据。
-        // 表单载入统一走 setFormData（下方），以触发 encrypt 字段的 set 解密
+        // 其值只由用户编辑经 input 事件累积，不承载 getData / payload 的载入数据。
+        // 表单载入统一走 setFormData（下方），以触发表单项的 set 变换
         state.bindFormData.value = {};
         if (getVarType(props.config.getData) === 'asyncFunction') {
           state.loading.value = true;
@@ -215,7 +213,7 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
               // 异步数据已落库，此刻才能解析按钮文案（见 getOkButtonText 注释）
               refreshOkButtonText();
               // getData 结果直接作为表单载入数据，不写入 bindFormData；
-              // 异步取数返回后，等表单挂载完成再显式调用 setFormData，触发 encrypt 字段的 set 解密
+              // 异步取数返回后，等表单挂载完成再显式调用 setFormData，触发表单项的 set 变换
               const formPayload = { ...res };
               nextTick(() => {
                 nextTick(() => {
@@ -237,7 +235,7 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
             state.data.value = payload;
             formPayload = JSON.parse(JSON.stringify(payload));
           }
-          // 弹窗展示后表单才挂载，nextTick 后 formRef 可用；显式调用 setFormData 触发 encrypt 字段的 set 解密
+          // 弹窗展示后表单才挂载，nextTick 后 formRef 可用；显式调用 setFormData 触发表单项的 set 变换
           nextTick(() => {
             nextTick(() => {
               applyFormDataToForm(formPayload);

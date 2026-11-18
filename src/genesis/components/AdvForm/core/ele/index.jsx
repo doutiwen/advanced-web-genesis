@@ -32,14 +32,11 @@
  * | upload-{key}-previewContent | 上传预览内容自定义 |
  * | button | 按钮区域自定义 |
  *
- * 【表单项加解密配置】
- * 表单项配置 encrypt: true 时的加解密包装由入口组件 AdvForm/index.vue 实现（不在本核心组件中）：
- * 入口组件会把该字段的 set/get 包装一层（依托核心组件原有的表单项 set/get 配置项）：
- *   - set：仅在 setFormData() 设置表单数据时调用，用 urlPublicKey 解密（拉取数据时解密）
- *   - get：仅在 submit() 提交时调用，用 sm2Encrypt 加密（表单提交数据时加密）
- * 例：{ key: 'url', label: '报表地址', type: 'textarea', encrypt: true }
- * 说明：加密字段通过 setFormData() 加载（展示明文）、submit() 提交（发出密文）；
- *      用户编辑输入不触发 set/get 变换。set 解密失败时（后端已返回明文）原样透传。
+ * 【表单项数据变换】
+ * 通过表单项的 set / get 配置实现数据变换（两者需同时提供）：
+ *   - set：仅在 setFormData() 载入数据时调用
+ *   - get：仅在 submit() 提交时调用
+ * 用户编辑输入与 updateFormData() 均不触发变换。
  */
 
 import classes from './index.module.scss';
@@ -64,20 +61,16 @@ export default defineComponent({
      */
     const {
       formItemRowList,
-      formItemDict,
       formDataState,
       validateRules,
       getFormEleComponentProps,
       formEleComponentShowInfo,
       formEleComponentOptionsInfo,
-      setFormItemRef,
-      getFormItemRef,
-      submit,
       submitButtonClickHandler,
       clearFormData,
       defineExposeConfig,
       computedGridConfig,
-    } = useAdvForm(toRefs(props), emit, eleFormRef, null, 'modelValue');
+    } = useAdvForm(toRefs(props), emit, eleFormRef, 'modelValue');
 
     /**
      * 验证规则转换（适配 Element Plus 格式）

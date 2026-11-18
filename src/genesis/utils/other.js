@@ -230,7 +230,8 @@ export class WatchManager {
   constructor(initWatchInfo) {
     this.watchInfoListMap = new Map(); //
     if (initWatchInfo) {
-      for (const { key, watchSetting } of Object.keys(initWatchInfo)) {
+      // 按 [key, watchSetting] 遍历；原实现解构字符串 key，永远拿不到配置
+      for (const [key, watchSetting] of Object.entries(initWatchInfo)) {
         this.setWatchInfo(key, watchSetting);
       }
     }

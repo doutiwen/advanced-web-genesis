@@ -1,11 +1,8 @@
 import predefineValidateRules from './predefineValidateRules.js';
-import { ref, computed, reactive, watch, onUnmounted, shallowRef } from 'vue';
+import { ref, computed, reactive, readonly, watch, onUnmounted, shallowRef } from 'vue';
 
-// AdvForm 组件 props 定义：modelValue 为表单数据对象、config 为表单配置
+// AdvForm 组件 props 定义：config 为表单配置
 const advFormProps = {
-  modelValue: {
-    type: Object,
-  },
   config: {
     type: Object,
     required: true,
@@ -13,14 +10,13 @@ const advFormProps = {
 };
 
 // AdvForm 组件 emits 定义
-const advFormEmits = ['update:modelValue', 'input', 'validateSuccess', 'validateFail'];
+const advFormEmits = ['input', 'validateSuccess', 'validateFail'];
 
 // AdvForm 核心逻辑工厂：根据配置与数据生成渲染所需的状态、watch 联动与表单操作方法
 const useAdvForm = (
-  { config, modelValue },
+  { config },
   emits,
   formRef,
-  UIAttrsTransform,
   vModelKey = 'value'
 ) => {
   const watchManager = new WatchManager();
@@ -57,6 +53,12 @@ const useAdvForm = (
   // 字段 key -> 其 watch 依赖的源 formData key 集合（用于判断用户是否改过联动源）
   const watchSourceKeysMap = new Map();
 
+  // ============ 未配置字段透传缓冲 ============
+  // setFormData 过滤掉未在 config.list 中配置的 key 时，同时把它们暂存到这里，
+  // 供 submit() 原样合并回提交数据——既保持回填阶段 UI 不显示、watch 不处理，
+  // 又恢复原语义：未配置字段在 submit 时随表单一起原样提交。
+  let externalFormDataBuffer = {};
+
   // 记录某字段 watch 依赖的源 formData key
   const recordWatchSourceKeys = (key, sourceKeys) => {
     if (!sourceKeys?.length) return;
@@ -91,20 +93,20 @@ const useAdvForm = (
 
   const formEleComponentProps = {};
 
+  // 表单项 key -> 控件类型：watch 注册阶段 formItemDict 尚未构建完成，用它判断选项类字段
+  const formItemTypeMap = new Map();
+
   let currentInputKey;
 
   const _config = toValue(config);
 
-  // 收集 props.config.list 中配置过的表单项 key（兼容一维 / 二维配置），
-  // 用于过滤回填数据中未在本表单配置过的字段——setFormData 回填与 modelValue 双向绑定共用此集合
+  // 收集 props.config.list 中配置过的表单项 key，
+  // 用于过滤回填数据中未在本表单配置过的字段，供 setFormData 回填使用
   const getConfiguredFormItemKeySet = () => {
     const configuredKeySet = new Set();
-    for (const rowConfig of _config?.list ?? []) {
-      const rowFormItems = Array.isArray(rowConfig) ? rowConfig : [rowConfig];
-      for (const formItemConfig of rowFormItems) {
-        if (formItemConfig?.key != null) {
-          configuredKeySet.add(String(formItemConfig.key));
-        }
+    for (const formItemConfig of _config?.list ?? []) {
+      if (formItemConfig?.key != null) {
+        configuredKeySet.add(String(formItemConfig.key));
       }
     }
     return configuredKeySet;
@@ -118,32 +120,59 @@ const useAdvForm = (
 
   const formDataState = reactive({});
 
-  watch(
-    modelValue,
-    (n, o) => {
-      if (n) {
-        const configuredKeySet = getConfiguredFormItemKeySet();
-        for (const [key, val] of Object.entries(n)) {
-          // 未在 props.config.list 中配置的 key 不属于本表单表单项，跳过不写入
-          if (!configuredKeySet.has(String(key))) continue;
-          // 数据变换（set/get）只在 setFormData / submit 中应用，modelValue 直接赋值
-          currentInputKey = key;
-          formDataState[key] = val;
-        }
-      }
-    },
-    {
-      deep: true,
-      immediate: true,
+  // 选项类控件类型：下拉 / 树选择 / 单选 / 多选，其选中值需要一并派发对应的 option item
+  const optionItemInputTypes = ['select', 'treeSelect', 'radio', 'checkbox'];
+
+  // 按 value 在选项列表中查找选项对象：递归 children，兼容扁平与树形结构
+  const findOptionItemByValue = (optionList, targetValue) => {
+    for (const optionItem of optionList ?? []) {
+      if (optionItem.value === targetValue) return optionItem;
+      const childHit = findOptionItemByValue(optionItem.children, targetValue);
+      if (childHit) return childHit;
     }
-  );
+    return undefined;
+  };
+
+  // 根据字段当前值在选项列表中查找对应的 option item：
+  // 多选（值为数组）返回 option item 数组（过滤未匹配项），单选返回单个 option item，
+  // 非选项类控件或未命中时返回空对象（保持原有 data 结构）
+  const getSelectedOptionItemData = (key, value) => {
+    const formItem = formItemDict.value[key];
+    if (!formItem || !optionItemInputTypes.includes(formItem.type)) return {};
+    const optionList = formEleComponentOptionsInfo[key]?.value ?? [];
+    if (Array.isArray(value)) {
+      return value
+        .map((itemValue) => findOptionItemByValue(optionList, itemValue))
+        .filter(Boolean);
+    }
+    return findOptionItemByValue(optionList, value) ?? {};
+  };
+
+  // 收集提交数据中各选项类字段对应的选中项对象（仅针对实际提交的字段）
+  const collectSelectedOptionItems = (keys) => {
+    const optionItems = {};
+    for (const key of keys) {
+      const formItem = formItemDict.value[key];
+      if (!formItem || !optionItemInputTypes.includes(formItem.type)) continue;
+      const value = formDataState[key];
+      if (value == null) continue;
+      optionItems[key] = getSelectedOptionItemData(key, value);
+    }
+    return optionItems;
+  };
+
+  // 程序化批量回填标记：setFormData / clearFormData 期间不派发 input，保证该事件只代表用户编辑
+  let isApplyingFormData = false;
 
   watch(
     formDataState,
-    (n, o) => {
+    (n) => {
+      // 无当前交互字段（如批量写值）或处于程序化回填中时不派发
+      if (currentInputKey == null || isApplyingFormData) return;
       emits('input', {
         key: currentInputKey,
-        data: n[currentInputKey],
+        value: n[currentInputKey],
+        data: getSelectedOptionItemData(currentInputKey, n[currentInputKey]),
       });
     },
     {
@@ -153,8 +182,6 @@ const useAdvForm = (
   );
 
   const validateRules = ref({});
-
-  const formItemRef = new Map();
 
   const formEleComponentShowInfo = ref({});
 
@@ -166,19 +193,6 @@ const useAdvForm = (
   const isOwnOptionsType = (type) => {
     return ['select', 'treeSelect', 'radio', 'checkbox'].includes(type);
   };
-
-  // 记录表单项组件引用
-  const setFormItemRef = (formItemKey, ref) => {
-    formItemRef.set(formItemKey, ref);
-  };
-
-  // 获取表单项组件引用
-  const getFormItemRef = (formItemKey) => {
-    return formItemRef.get[formItemKey];
-  };
-
-  // 表单项显隐切换（占位实现，显隐实际由 show 联动 watch 维护）
-  const formItemToggleShow = (key, newShowValue) => {};
 
   // 标准化校验规则：命中预定义规则则合并默认配置，并支持 message 覆盖与空值跳过非必填校验
   const validateConfigItemFormat = (sourceValidateItem, label, validateRuleList = []) => {
@@ -223,95 +237,123 @@ const useAdvForm = (
     return targetValidateRuleItem;
   };
 
-  // ============ watch 依赖引用解析 ============
-  // keys 中除 formData 字段 key 外，还支持函数式引用其他响应式属性：
-  //   options(b)          → 字段 b 的 options（formEleComponentOptionsInfo[b]）
-  //   selected(b)         → 字段 b 的当前选中项（由值 + options 共同驱动）
-  //   show(b)             → 字段 b 的显隐状态（formEleComponentShowInfo[b]）
-  //   attrs(b, disabled)  → 字段 b 的自定义属性（formEleComponentAttrsInfo[b][disabled]）
-  // 引用只声明"触发依赖"；handle 中通过生成的局部名读取值（options(b) → options_b），
-  // 字符串表达式会先把引用替换成局部名再构建 new Function。
-  const WATCH_SCOPE_REF_REGEX =
-    /\b(options|selected|show|attrs)\(\s*([\w$]+)(?:\s*,\s*([\w$]+))?\s*\)/g;
-  const WATCH_SINGLE_SCOPE_REF_REGEX =
-    /^(options|selected|show|attrs)\(\s*([\w$]+)(?:\s*,\s*([\w$]+))?\s*\)$/;
+  // ============ watch 联动（统一数组配置） ============
+  // 配置形态：watch: [{ on, option?, attrKey?, show|options|value|validate|attrs: fn }]
+  // - on 为内部字段/描述符时，动作接收 (values, oldValues, ctx)
+  // - on 为外部响应式源时，动作接收 (newVal, oldVal, ctx)，与 Vue watch 一致
+  // - 动作只接受函数；字符串表达式已移除
+  const WATCH_ACTION_NAMES = ['show', 'options', 'value', 'validate', 'attrs'];
+  const WATCH_DEP_TYPES = ['options', 'selected', 'show', 'attrs'];
+  // 旧版字符串 DSL 特征：options(x) / selected(x) / show(x) / attrs(x, y)
+  const LEGACY_DSL_PATTERN = /(?:options|selected|show|attrs)\s*\(/;
+  const warnedLegacyWatch = new Set();
 
-  // 生成 watch 引用的局部参数名（attrs 引用额外携带属性名）
-  const buildWatchRefLocalName = (type, key, attrKey) => {
-    return type === 'attrs' && attrKey ? `attrs_${key}_${attrKey}` : `${type}_${key}`;
+  // 旧版 watch 配置首次命中时输出一次迁移提示
+  const warnLegacyWatchOnce = (key, type) => {
+    const flag = `${key}-${type}`;
+    if (warnedLegacyWatch.has(flag)) return;
+    warnedLegacyWatch.add(flag);
+    console.warn(
+      `[AdvForm] 表单项 "${key}" 的 ${type} 使用了旧版 watch 配置，建议迁移到 watch 数组写法`
+    );
   };
 
-  // 匹配单个 watch 引用字符串（如 options(a)、show(b)），返回结构化的引用信息
-  const matchSingleWatchRef = (item) => {
-    if (typeof item !== 'string') return null;
-    const m = item.match(WATCH_SINGLE_SCOPE_REF_REGEX);
-    if (!m) return null;
-    const [, type, key, attrKey] = m;
-    return { type, key, attrKey, localName: buildWatchRefLocalName(type, key, attrKey), raw: item };
+  // 依赖描述符：只建立订阅，不进入动作的 values
+  const isWatchDepDescriptor = (item) =>
+    !!item &&
+    typeof item === 'object' &&
+    WATCH_DEP_TYPES.includes(item.type) &&
+    item.key != null;
+
+  // 判断 on 是否为内部字段/描述符形态
+  const isInternalWatchOn = (on) => {
+    if (typeof on === 'string') return true;
+    if (isWatchDepDescriptor(on)) return true;
+    return (
+      Array.isArray(on) &&
+      on.length > 0 &&
+      on.every((item) => typeof item === 'string' || isWatchDepDescriptor(item))
+    );
   };
 
-  // 解析 keys（字符串或数组）：拆分为纯 formData key 与引用依赖
-  const parseWatchKeys = (keys) => {
-    const sourceKeys = typeof keys === 'string' ? [keys] : [...keys];
-    const formDataKeys = [];
-    const deps = [];
-    for (const item of sourceKeys) {
-      const ref = matchSingleWatchRef(item);
-      if (ref) {
-        deps.push(ref);
-      } else {
-        formDataKeys.push(item);
+  // 校验单条 watch 规则并做归一化
+  const normalizeWatchRule = (formItemKey, rawRule, index) => {
+    const where = `[AdvForm] 表单项 "${formItemKey}" 的 watch[${index}]`;
+    if (!rawRule || typeof rawRule !== 'object') {
+      throw new Error(`${where} 必须是对象`);
+    }
+    const actionNames = WATCH_ACTION_NAMES.filter((name) => Reflect.has(rawRule, name));
+    if (actionNames.length !== 1) {
+      throw new Error(
+        `${where} 必须且只能配置一个动作（${WATCH_ACTION_NAMES.join(
+          ' / '
+        )}），当前为：${actionNames.join(', ') || '无'}`
+      );
+    }
+    const actionName = actionNames[0];
+    const action = rawRule[actionName];
+    if (typeof action !== 'function') {
+      throw new Error(
+        `${where} 的动作 "${actionName}" 必须是函数；字符串表达式已移除，请改为 ({ 字段名 }) => 结果`
+      );
+    }
+    if (rawRule.on == null) {
+      throw new Error(`${where} 缺少 on 依赖声明`);
+    }
+    if (actionName === 'attrs' && !rawRule.attrKey) {
+      throw new Error(`${where} 的 attrs 动作必须配置 attrKey`);
+    }
+    if (actionName !== 'attrs' && rawRule.attrKey) {
+      throw new Error(`${where} 配置了 attrKey，但动作是 ${actionName}；attrKey 仅用于 attrs`);
+    }
+    if (isInternalWatchOn(rawRule.on)) {
+      const onList = Array.isArray(rawRule.on) ? rawRule.on : [rawRule.on];
+      for (const item of onList) {
+        if (typeof item === 'string' && LEGACY_DSL_PATTERN.test(item)) {
+          throw new Error(
+            `${where} 的 on 不支持 options()/selected()/show()/attrs() 字符串引用，` +
+              `请写字段 key 并使用 ctx 中的同名方法`
+          );
+        }
+        if (isWatchDepDescriptor(item)) {
+          if (item.type === 'attrs' && !item.attrKey) {
+            throw new Error(`${where} 的 on 描述符 type="attrs" 必须配置 attrKey`);
+          }
+          if (item.type !== 'attrs' && item.attrKey) {
+            throw new Error(`${where} 的 on 描述符仅 type="attrs" 需要 attrKey`);
+          }
+        }
+      }
+    } else {
+      const sourceList = Array.isArray(rawRule.on) ? rawRule.on : [rawRule.on];
+      if (!sourceList.length) {
+        throw new Error(`${where} 的 on 不能为空`);
+      }
+      for (const item of sourceList) {
+        const isSource = typeof item === 'function' || (item && typeof item === 'object');
+        if (!isSource) {
+          throw new Error(`${where} 的 on 不能混用内部字段与外部响应式源`);
+        }
       }
     }
-    return { formDataKeys: [...new Set(formDataKeys)], deps };
-  };
-
-  // 解析字符串表达式：把引用替换为局部名，剩余标识符作为 formData key
-  const parseStringWatchConfig = (expr) => {
-    const deps = [];
-    const localNames = [];
-    const transformed = expr.replace(WATCH_SCOPE_REF_REGEX, (full, type, key, attrKey) => {
-      const localName = buildWatchRefLocalName(type, key, attrKey);
-      deps.push({ type, key, attrKey, localName, raw: full });
-      localNames.push(localName);
-      return localName;
-    });
-    const keyNameRegex = /[a-zA-Z_$][a-zA-Z0-9_$]*/g;
-    const allMatches = transformed.match(keyNameRegex) || [];
-    const formDataKeys = [...new Set(allMatches.filter((k) => !localNames.includes(k)))];
     return {
-      formDataKeys,
-      deps,
-      transformed,
-      rawKeys: [...formDataKeys, ...deps.map((d) => d.raw)],
+      actionName,
+      action,
+      attrKey: rawRule.attrKey,
+      on: rawRule.on,
+      option: rawRule.option,
     };
   };
 
-  // 依赖在触发源（computed）中订阅的响应式值
-  const resolveWatchRefSources = (dep) => {
+  // 描述符只在 computed 中读取一次，用于建立响应式订阅
+  const touchWatchDep = (dep) => {
     switch (dep.type) {
       case 'options':
-        return [formEleComponentOptionsInfo[dep.key]?.value];
+        return formEleComponentOptionsInfo[dep.key]?.value;
       case 'selected':
         return [formDataState[dep.key], formEleComponentOptionsInfo[dep.key]?.value];
       case 'show':
-        return [formEleComponentShowInfo.value[dep.key]];
-      case 'attrs':
-        return [formEleComponentAttrsInfo[dep.key]?.[dep.attrKey]?.value];
-      default:
-        return [];
-    }
-  };
-
-  // 依赖在 handle 参数中的取值
-  const resolveWatchRefValue = (dep, args) => {
-    switch (dep.type) {
-      case 'options':
-        return formEleComponentOptionsInfo[dep.key]?.value ?? [];
-      case 'selected':
-        return args?.currentSelectInfo?.[dep.key];
-      case 'show':
-        return formEleComponentShowInfo.value[dep.key] ?? false;
+        return formEleComponentShowInfo.value[dep.key];
       case 'attrs':
         return formEleComponentAttrsInfo[dep.key]?.[dep.attrKey]?.value;
       default:
@@ -319,165 +361,222 @@ const useAdvForm = (
     }
   };
 
-  // 组装 handle 参数名，冲突时给出明确报错
-  const buildWatchHandleParams = (formDataKeys, deps) => {
-    const paramNames = [...formDataKeys, ...deps.map((d) => d.localName)];
-    if (new Set(paramNames).size !== paramNames.length) {
-      throw new Error(
-        `[AdvForm] watch 配置 keys 与 options()/selected()/show()/attrs() 引用生成的参数名冲突：${paramNames.join(
-          ', '
-        )}`
-      );
+  // 内部依赖源：字段值 + 描述符订阅 + 选项类字段自动订阅选项变化
+  const buildInternalWatchSource = (on) => {
+    const onList = Array.isArray(on) ? on : [on];
+    const valueKeys = [];
+    const depList = [];
+    for (const item of onList) {
+      if (typeof item === 'string') {
+        if (!valueKeys.includes(item)) valueKeys.push(item);
+      } else {
+        depList.push(item);
+      }
     }
-    return paramNames;
+    const optionKeys = valueKeys.filter((key) => isOwnOptionsType(formItemTypeMap.get(key)));
+    return {
+      valueKeys,
+      source: computed(() => {
+        depList.forEach((dep) => touchWatchDep(dep));
+        // 选项类字段：值变化或选项变化都触发，对齐旧 selected()/options() 的触发语义
+        optionKeys.forEach((key) => formEleComponentOptionsInfo[key]?.value);
+        return valueKeys.map((key) => formDataState[key]);
+      }),
+    };
   };
 
-  // 组装 watch handle 入参：formData 快照、全量 options、选中项信息及各字段 key / 引用局部名
-  const getWatchHandleArgs = (watchKeys) => {
-    const { formDataKeys, deps } = parseWatchKeys(watchKeys);
-    const watchHandleArgs = {
-      optionsInfo: Object.entries(formEleComponentOptionsInfo).reduce((newObj, [key, value]) => {
-        newObj[key] = value.value;
-        return newObj;
+  // 将依赖值数组还原为命名字段对象
+  const buildWatchValues = (keys, valueList) => {
+    const values = {};
+    keys.forEach((key, index) => {
+      values[key] = valueList?.[index];
+    });
+    return values;
+  };
+
+  // 选中项查询：对齐旧行为，单选未命中返回 undefined；多选返回命中数组
+  const getWatchSelectedOption = (key) => {
+    const optionList = formEleComponentOptionsInfo[key]?.value ?? [];
+    const currentValue = formDataState[key];
+    if (Array.isArray(currentValue)) {
+      return currentValue
+        .map((itemValue) => findOptionItemByValue(optionList, itemValue))
+        .filter(Boolean);
+    }
+    return findOptionItemByValue(optionList, currentValue);
+  };
+
+  // 联动上下文：formData 为触发时快照，与旧实现一致
+  const buildWatchCtx = () => ({
+    formData: { ...formDataState },
+    selected: getWatchSelectedOption,
+    options: (key) => formEleComponentOptionsInfo[key]?.value ?? [],
+    show: (key) => formEleComponentShowInfo.value[key] ?? false,
+    attrs: (key, attrKey) => formEleComponentAttrsInfo[key]?.[attrKey]?.value,
+  });
+
+  const reportWatchError = (key, actionName, err) => {
+    console.error(`[AdvForm] 表单项 "${key}" 的 watch ${actionName} 执行失败`, err);
+  };
+
+  // 更新表单项自定义属性的通用逻辑
+  const updateFormEleAttr = (key, attrKey, newValue) => {
+    if (!formEleComponentAttrsInfo[key]) {
+      formEleComponentAttrsInfo[key] = {};
+    }
+    if (!formEleComponentAttrsInfo[key][attrKey]) {
+      formEleComponentAttrsInfo[key][attrKey] = ref(newValue);
+    } else {
+      formEleComponentAttrsInfo[key][attrKey].value = newValue;
+    }
+  };
+
+  // 动作结果分发：统一同步/异步，异常带字段与动作信息
+  const consumeWatchResult = (key, actionName, attrKey, result) => {
+    if (result && typeof result.then === 'function') {
+      result
+        .then((resolved) => applyWatchAction(key, actionName, attrKey, resolved))
+        .catch((err) => reportWatchError(key, actionName, err));
+      return;
+    }
+    applyWatchAction(key, actionName, attrKey, result);
+  };
+
+  // 执行用户动作：参数后追加 ctx，异常与异步失败统一输出
+  const runWatchAction = (key, actionName, attrKey, action, args) => {
+    let result;
+    try {
+      result = action(...args, buildWatchCtx());
+    } catch (err) {
+      reportWatchError(key, actionName, err);
+      return;
+    }
+    consumeWatchResult(key, actionName, attrKey, result);
+  };
+
+  // 动作结果落到表单状态（消费函数在运行时已初始化）
+  const applyWatchAction = (key, actionName, attrKey, result) => {
+    switch (actionName) {
+      case 'show':
+        formEleItemShowChangeFn(key, result);
+        break;
+      case 'options':
+        formEleItemOptionsChangeFn(key, result);
+        break;
+      case 'value':
+        formEleItemBindValueChangeFn(key, result);
+        break;
+      case 'validate':
+        formEleItemValidateChangeFn(key, result);
+        break;
+      case 'attrs':
+        updateFormEleAttr(key, attrKey, result);
+        break;
+      default:
+        break;
+    }
+  };
+
+  // 旧版 watch keys：只接受普通字段 key，字符串 DSL 已移除
+  const parseLegacyWatchKeys = (keys, formItemKey, type) => {
+    if (typeof keys !== 'string' && !Array.isArray(keys)) {
+      throw new Error(
+        `[AdvForm] 表单项 "${formItemKey}" 的 ${type} watch keys 必须是字符串或字符串数组`
+      );
+    }
+    const sourceKeys = typeof keys === 'string' ? [keys] : keys;
+    const formDataKeys = [];
+    for (const item of sourceKeys) {
+      if (typeof item !== 'string') {
+        throw new Error(
+          `[AdvForm] 表单项 "${formItemKey}" 的 ${type} watch keys 只支持字段 key 字符串`
+        );
+      }
+      if (LEGACY_DSL_PATTERN.test(item)) {
+        throw new Error(
+          `[AdvForm] 表单项 "${formItemKey}" 的 ${type} watch keys 使用了已移除的字符串 DSL：${item}`
+        );
+      }
+      if (!formDataKeys.includes(item)) formDataKeys.push(item);
+    }
+    return formDataKeys;
+  };
+
+  // 旧版 handle 入参：保持 optionsInfo / currentSelectInfo / formData 兼容
+  const buildLegacyWatchArgs = (formDataKeys) => {
+    const args = {
+      optionsInfo: Object.entries(formEleComponentOptionsInfo).reduce((result, [key, value]) => {
+        result[key] = value.value;
+        return result;
       }, {}),
       currentSelectInfo: {},
       formData: { ...formDataState },
     };
-    // 需要计算选中项信息的字段：formData key 与 options/selected 引用指向的字段
-    const currentSelectTargets = [
-      ...formDataKeys,
-      ...deps.filter((d) => d.type === 'options' || d.type === 'selected').map((d) => d.key),
-    ];
-    for (const targetKey of new Set(currentSelectTargets)) {
-      if (formEleComponentOptionsInfo[targetKey]) {
-        watchHandleArgs.currentSelectInfo[targetKey] = formEleComponentOptionsInfo[
-          targetKey
-        ].value.find((i) => i.value === formDataState[targetKey]);
-      }
-    }
-    for (const formDataKey of formDataKeys) {
-      watchHandleArgs[formDataKey] = formDataState[formDataKey];
-    }
-    for (const dep of deps) {
-      watchHandleArgs[dep.localName] = resolveWatchRefValue(dep, watchHandleArgs);
-    }
-    return watchHandleArgs;
-  };
-
-  // 将字符串或 { keys, handle } 配置解析为 Vue3 watch 参数 [computed 依赖源, 触发回调, option?]
-  const getWatchSetting = (key, sourceWatchConfig, stateChangeHandle) => {
-    const targetWatchConfig = {
-      keys: [],
-      handle: null,
-    };
-    let watchSetting;
-    if (typeof sourceWatchConfig === 'string') {
-      const { formDataKeys, deps, transformed, rawKeys } =
-        parseStringWatchConfig(sourceWatchConfig);
-      targetWatchConfig.keys = rawKeys;
-      // 记录该字段 watch 依赖的源字段，供回填值保护判定联动源是否被用户改动
-      recordWatchSourceKeys(key, [...formDataKeys, ...deps.map((d) => d.key)]);
-      const paramNames = buildWatchHandleParams(formDataKeys, deps);
-      targetWatchConfig.handle = new Function(`{${paramNames.join(',')}}`, `return ${transformed}`);
-      watchSetting = [
-        computed(() => [
-          ...formDataKeys.map((key) => formDataState[key]),
-          ...deps.flatMap((dep) => resolveWatchRefSources(dep)),
-        ]),
-        () => {
-          stateChangeHandle(key, targetWatchConfig.keys, targetWatchConfig.handle);
-        },
-      ];
-    } else if (sourceWatchConfig.keys) {
-      if (typeof sourceWatchConfig.keys === 'string') {
-        targetWatchConfig.keys.push(sourceWatchConfig.keys);
-      } else if (getVarType(sourceWatchConfig.keys) === 'array') {
-        targetWatchConfig.keys.push(...sourceWatchConfig.keys);
-      }
-      const { formDataKeys, deps } = parseWatchKeys(targetWatchConfig.keys);
-      // 记录该字段 watch 依赖的源字段，供回填值保护判定联动源是否被用户改动
-      recordWatchSourceKeys(key, [...formDataKeys, ...deps.map((d) => d.key)]);
-
-      if (sourceWatchConfig?.handle) {
-        targetWatchConfig.handle = sourceWatchConfig.handle;
-      } else {
-        const paramNames = buildWatchHandleParams(formDataKeys, deps);
-        targetWatchConfig.handle = new Function(
-          `{${paramNames.join(',')}}`,
-          `return ${paramNames.join('&&') || 'true'}`
+    for (const key of formDataKeys) {
+      args[key] = formDataState[key];
+      if (formEleComponentOptionsInfo[key]?.value) {
+        args.currentSelectInfo[key] = findOptionItemByValue(
+          formEleComponentOptionsInfo[key].value,
+          formDataState[key]
         );
       }
+    }
+    return args;
+  };
 
-      watchSetting = [
-        computed(() => [
-          ...formDataKeys.map((key) => formDataState[key]),
-          ...deps.flatMap((dep) => resolveWatchRefSources(dep)),
-        ]),
-        () => {
-          stateChangeHandle(key, targetWatchConfig.keys, targetWatchConfig.handle);
-        },
-      ];
-
-      if (sourceWatchConfig?.option) {
-        watchSetting.push(sourceWatchConfig.option);
-      }
+  // 旧版 { keys, handle } 配置 → Vue watch 参数
+  const getLegacyWatchSetting = (key, watchConfig, actionName, attrKey) => {
+    if (watchConfig?.keys == null) {
+      throw new Error(
+        `[AdvForm] 表单项 "${key}" 的 ${actionName} watch 配置缺少 keys，请改用 watch 数组写法`
+      );
+    }
+    const formDataKeys = parseLegacyWatchKeys(watchConfig.keys, key, actionName);
+    // 记录联动源，供回填值保护判断源字段是否被用户改动
+    recordWatchSourceKeys(key, formDataKeys);
+    const handle =
+      watchConfig.handle ??
+      ((values) => {
+        // 未配置 handle 时保持旧语义：无 keys 返回 true，否则返回 keys 的短路与结果
+        if (!formDataKeys.length) return true;
+        let result;
+        for (const formDataKey of formDataKeys) {
+          result = values[formDataKey];
+          if (!result) return result;
+        }
+        return result;
+      });
+    const watchSetting = [
+      computed(() => formDataKeys.map((formDataKey) => formDataState[formDataKey])),
+      () => {
+        let result;
+        try {
+          result = handle(buildLegacyWatchArgs(formDataKeys));
+        } catch (err) {
+          reportWatchError(key, actionName, err);
+          return;
+        }
+        consumeWatchResult(key, actionName, attrKey, result);
+      },
+    ];
+    if (watchConfig.option) {
+      watchSetting.push(watchConfig.option);
     }
     return watchSetting;
   };
 
-  // update:modelValue 防抖缓存机制
-  // 在极快速度下连续调用 updateFormDataState 时，将各字段的最新值缓存起来，
-  // 统一推迟到下一个事件循环（setTimeout 0）触发一次 update:modelValue，避免高频 emit 造成父组件频繁更新。
-  // 若未配置 modelValue，则保持原有逻辑（直接更新 formDataState），不走防抖。
-  let modelValueUpdateTimer = null;
-  let pendingModelValueCache = {};
-
-  // 冲刷防抖缓存：一次性 emit update:modelValue（modelValue 被清空时直接写回 formDataState）
-  const flushModelValueUpdate = () => {
-    modelValueUpdateTimer = null;
-    const cache = pendingModelValueCache;
-    pendingModelValueCache = {};
-    const cachedKeys = Object.keys(cache);
-    if (cachedKeys.length === 0) return;
-    if (toValue(modelValue)) {
-      const newModelValue = Object.assign(JSON.parse(JSON.stringify(toValue(modelValue))), cache);
-      emits('update:modelValue', newModelValue);
-    } else {
-      // 防抖期间 modelValue 被清空时，沿用无 modelValue 的原有逻辑直接写入 formDataState
-      for (const key of cachedKeys) {
-        // 数据变换（set/get）只在 setFormData / submit 中应用，这里直接写入用户输入值
-        formDataState[key] = cache[key];
-      }
-    }
-  };
-
-  // 缓存字段最新值，并由 setTimeout 0 统一触发一次防抖冲刷
-  const cacheModelValueUpdate = (key, realValue) => {
-    pendingModelValueCache[key] = realValue;
-    if (modelValueUpdateTimer === null) {
-      modelValueUpdateTimer = setTimeout(flushModelValueUpdate, 0);
-    }
-  };
-
-  // 更新字段值入口：字段值一律同步写入 formDataState；配置了 modelValue 时额外走防抖缓存 emit 同步父层
+  // 更新字段值入口：同步写入 formDataState（表单项组件直接以该状态作为 modelValue）
+  // 必须同步落库：Element Plus 在输入事件后会 await nextTick() 回写原生 value，
+  // 同步写入可让其判定新旧值一致并保留自带的光标恢复逻辑，避免光标跳到末尾。
   const updateFormDataState = (key, value) => {
     currentInputKey = key;
     // 用户输入/动态值直接写入，不做 set/get 变换（变换只在 setFormData / submit 中应用）
-    // 【必须同步落库，不能只依赖父层回显】el-input 的 handleInput 在 emit 之后会 await nextTick() 回写原生 value：
-    // 若此刻 props.modelValue 仍是旧值，原生 value 会被回写成旧文本（文本回退，光标随之丢失），
-    // 待防抖 flush 后父层回显新值、再经 watch(nativeInputValue) 写 DOM 时（该路径 Element Plus 不做任何光标补偿），
-    // 光标即跳到文本末尾（在文本中间删除字符时光标跳变即由此产生）。
-    // 同步写入后 props.modelValue 在一个微任务内即跟上 UI，EP 的 setNativeInputValue 判定新旧一致直接 return，
-    // 其自带的光标恢复逻辑（useCursor）得以生效；无 modelValue 时行为不变。
     formDataState[key] = value;
-    if (toValue(modelValue)) {
-      cacheModelValueUpdate(key, value);
-    }
   };
 
-  // show 联动：用 handle 结果控制字段显隐，隐藏时清空字段值
-  const formEleItemShowChangeFn = (key, watchKeys, handle) => {
-    const isShow = handle(getWatchHandleArgs(watchKeys));
+  // show 联动：用动作结果控制字段显隐，隐藏时清空字段值
+  const formEleItemShowChangeFn = (key, result) => {
+    const isShow = Boolean(result);
     if (!isShow) {
       formDataState[key] = undefined;
     }
@@ -486,237 +585,220 @@ const useAdvForm = (
 
   // 解析 options 联动结果：纯数组直接作为选项，{ value, options } 同时回填选中值
   const parsingOptionsResult = (key, result) => {
-    if (toValue(modelValue)) {
-      if (Array.isArray(result)) {
-        formEleComponentOptionsInfo[key].value = result;
-      } else if (typeof result === 'object' && result?.value && result?.options) {
-        // 字段已被回填且联动源未被用户改动时，仅更新选项、不写回字段值，保护后端值
-        if (!shouldSuppressWatchValueWrite(key)) {
-          updateFormDataState(key, result.value);
-        }
-        formEleComponentOptionsInfo[key].value = result.options;
+    if (Array.isArray(result)) {
+      formEleComponentOptionsInfo[key].value = result;
+    } else if (typeof result === 'object' && Reflect.has(result, 'value') && result?.options) {
+      // 字段已被回填且联动源未被用户改动时，仅更新选项、不写回字段值，保护后端值
+      if (!shouldSuppressWatchValueWrite(key)) {
+        updateFormDataState(key, result.value);
       }
-    } else {
-      if (Array.isArray(result)) {
-        formEleComponentOptionsInfo[key].value = result;
-      } else if (typeof result === 'object' && result?.value && result?.options) {
-        // 字段已被回填且联动源未被用户改动时，仅更新选项、不写回字段值，保护后端值
-        if (!shouldSuppressWatchValueWrite(key)) {
-          updateFormDataState(key, result.value);
-        }
-        formEleComponentOptionsInfo[key].value = result.options;
-      }
+      formEleComponentOptionsInfo[key].value = result.options;
     }
   };
 
-  // options 联动：执行 handle（支持异步）并解析结果更新选项数据
-  const formEleItemOptionsChangeFn = (key, watchKeys, handle) => {
-    const handleArgs = getWatchHandleArgs(watchKeys);
-    if (getVarType(handle) === 'asyncFunction') {
-      handle(handleArgs).then((res) => {
-        parsingOptionsResult(key, res);
-      });
-    } else if (typeof handle === 'function') {
-      parsingOptionsResult(key, handle(handleArgs));
-    }
+  // options 联动消费：异步结果已由 consumeWatchResult 统一等待
+  const formEleItemOptionsChangeFn = (key, result) => {
+    parsingOptionsResult(key, result);
   };
 
-  // value 联动：用 handle 结果动态回填字段值（字段已被回填且联动源未被用户改动时跳过，保护后端值）
-  const formEleItemBindValueChangeFn = (key, watchKeys, handle) => {
-    const newValue = handle(getWatchHandleArgs(watchKeys));
+  // value 联动：用动作结果动态回填字段值（字段已被回填且联动源未被用户改动时跳过，保护后端值）
+  const formEleItemBindValueChangeFn = (key, result) => {
     if (shouldSuppressWatchValueWrite(key)) {
       return;
     }
-    updateFormDataState(key, newValue);
+    updateFormDataState(key, result);
   };
 
-  // validate 联动：用 handle 结果动态生成或清除字段校验规则
-  const formEleItemValidateChangeFn = (key, watchKeys, handle) => {
-    const newValidateRules = handle(getWatchHandleArgs(watchKeys));
-    if (newValidateRules) {
-      formDataState[key] = undefined;
-      validateRules.value[key] = newValidateRules.map((validateItem) => {
-        return validateConfigItemFormat(validateItem, sourceFormItem.label, newValidateRules);
-      });
-      formRef.value?.clearValidate();
-    } else {
+  // validate 联动：用动作结果动态生成或清除字段校验规则
+  const formEleItemValidateChangeFn = (key, result) => {
+    if (!result) {
       Reflect.deleteProperty(validateRules.value, key);
+      return;
     }
-  };
-
-  // 自定义属性整体联动：用 handle 结果更新字段自定义属性
-  const formEleItemCustomAttrChangeFn = (key, watchKeys, handle) => {
-    const newCustomAttr = handle(getWatchHandleArgs(watchKeys));
-    if (newCustomAttr) {
-      formDataState[key] = undefined;
-      formEleComponentCustomAttrInfo[key].value = newCustomAttr;
-    } else {
-      Reflect.deleteProperty(formEleComponentCustomAttrInfo, key);
+    if (!Array.isArray(result)) {
+      reportWatchError(key, 'validate', new Error('validate 联动必须返回规则数组或空值'));
+      return;
     }
+    formDataState[key] = undefined;
+    const label = formItemDict.value[key]?.label ?? key;
+    validateRules.value[key] = result.map((validateItem) => {
+      return validateConfigItemFormat(validateItem, label, result);
+    });
+    formRef.value?.clearValidate();
   };
 
-  // 包装数组格式 watch 的 callback，统一支持异步 callback
-  // 通过 getVarType 判断 callback 是否为 asyncFunction，若是则等待 resolve 后再交给 consumeFn 处理
-  const wrapAsyncWatchCallback = (callback, consumeFn) => {
-    return (newVal, oldVal) => {
-      if (getVarType(callback) === 'asyncFunction') {
-        callback(newVal, oldVal).then((res) => consumeFn(res));
-      } else {
-        consumeFn(callback(newVal, oldVal));
-      }
-    };
-  };
-
-  // 注册表单项全部 watch 联动（show/options/validate/value/自定义属性），按类型写入 WatchManager
+  // 注册表单项 watch 联动：新版 watch 数组 + 旧版配置（函数形态，告警）
   const setFormItemWatch = (sourceFormItem) => {
     const formItemKey = sourceFormItem.key;
+
+    // ===== 新版统一入口：watch 数组 =====
+    if (Array.isArray(sourceFormItem?.watch)) {
+      sourceFormItem.watch.forEach((rawRule, index) => {
+        const rule = normalizeWatchRule(formItemKey, rawRule, index);
+        // options 动作只适用于自带选项数据的控件
+        if (rule.actionName === 'options' && !isOwnOptionsType(formItemTypeMap.get(formItemKey))) {
+          throw new Error(
+            `[AdvForm] 表单项 "${formItemKey}" 的 watch[${index}] 使用 options 动作，但控件类型不支持动态选项`
+          );
+        }
+        // show 规则：先置隐藏，保持旧版首帧行为
+        if (rule.actionName === 'show') {
+          formEleComponentShowInfo.value[formItemKey] = false;
+        }
+        let watchSetting;
+        if (isInternalWatchOn(rule.on)) {
+          const { valueKeys, source } = buildInternalWatchSource(rule.on);
+          // 记录联动源，供回填值保护判断源字段是否被用户改动
+          recordWatchSourceKeys(formItemKey, valueKeys);
+          watchSetting = [
+            source,
+            (newValues, oldValues) => {
+              runWatchAction(formItemKey, rule.actionName, rule.attrKey, rule.action, [
+                buildWatchValues(valueKeys, newValues),
+                oldValues ? buildWatchValues(valueKeys, oldValues) : undefined,
+              ]);
+            },
+          ];
+        } else {
+          // 外部多源统一包成 getter：避免 WatchManager 把源数组误判为多条 watch 配置
+          const externalSource = Array.isArray(rule.on)
+            ? () => rule.on.map((source) => toValue(source))
+            : rule.on;
+          watchSetting = [
+            externalSource,
+            (newValue, oldValue) => {
+              runWatchAction(formItemKey, rule.actionName, rule.attrKey, rule.action, [
+                newValue,
+                oldValue,
+              ]);
+            },
+          ];
+        }
+        if (rule.option) {
+          watchSetting.push(rule.option);
+        }
+        setFormItemWatchInfo(formItemKey, rule.actionName, watchSetting);
+      });
+    }
+
+    // ===== 旧版配置兼容（仅函数/原生数组形态） =====
+    // 字符串表达式直接报错，避免静默失效
+    const assertLegacyNotString = (config, type) => {
+      if (typeof config === 'string') {
+        throw new Error(
+          `[AdvForm] 表单项 "${formItemKey}" 的 ${type} 字符串表达式已移除，请改用 watch 数组 + 函数`
+        );
+      }
+    };
+
+    // 旧版数组形态：保持 [source, callback, option] 的原生 watch 语义
+    const registerLegacyArrayWatch = (config, actionName, attrKey) => {
+      const [source, callback, options] = config;
+      if (typeof callback !== 'function') {
+        throw new Error(
+          `[AdvForm] 表单项 "${formItemKey}" 的 ${actionName} 数组形态第二个参数必须是函数`
+        );
+      }
+      const watchSetting = [
+        source,
+        (newValue, oldValue) => {
+          let result;
+          try {
+            result = callback(newValue, oldValue);
+          } catch (err) {
+            reportWatchError(formItemKey, actionName, err);
+            return;
+          }
+          consumeWatchResult(formItemKey, actionName, attrKey, result);
+        },
+        options,
+      ].filter(Boolean);
+      setFormItemWatchInfo(formItemKey, actionName, watchSetting);
+    };
+
     // 控制表单项显隐
     if (sourceFormItem?.show) {
-      // 数组格式：展开为 Vue3 watch 参数 [source, callback, options?]
-      // 对 callback 进行包装，将其返回值交由 formEleItemShowChangeFn 更新属性
+      assertLegacyNotString(sourceFormItem.show, 'show');
+      warnLegacyWatchOnce(formItemKey, 'show');
+      formEleComponentShowInfo.value[formItemKey] = false;
       if (getVarType(sourceFormItem.show) === 'array') {
-        const [source, callback, options] = sourceFormItem.show;
-        // 通过 wrapAsyncWatchCallback 支持 callback 返回 Promise（异步显隐控制）
-        const wrappedWatchSetting = [
-          source,
-          wrapAsyncWatchCallback(callback, (result) => {
-            formEleItemShowChangeFn(formItemKey, [], () => result);
-          }),
-          options,
-        ].filter(Boolean);
-        formEleComponentShowInfo.value[formItemKey] = false;
-        setFormItemWatchInfo(formItemKey, 'show', wrappedWatchSetting);
+        registerLegacyArrayWatch(sourceFormItem.show, 'show');
       } else {
-        formEleComponentShowInfo.value[sourceFormItem.key] = false;
-        const watchSetting = getWatchSetting(
+        setFormItemWatchInfo(
           formItemKey,
-          sourceFormItem.show,
-          formEleItemShowChangeFn
+          'show',
+          getLegacyWatchSetting(formItemKey, sourceFormItem.show, 'show')
         );
-        setFormItemWatchInfo(formItemKey, 'show', watchSetting);
       }
     }
+
     // 动态更新选项数据
     if (sourceFormItem?.options?.watch) {
-      // 数组格式：展开为 Vue3 watch 参数 [source, callback, options?]
-      // 对 callback 进行包装，将其返回值交由 formEleItemOptionsChangeFn 更新属性
+      assertLegacyNotString(sourceFormItem.options.watch, 'options');
+      warnLegacyWatchOnce(formItemKey, 'options');
       if (getVarType(sourceFormItem.options.watch) === 'array') {
-        const [source, callback, options] = sourceFormItem.options.watch;
-        // 通过 wrapAsyncWatchCallback 支持 callback 返回 Promise（异步加载选项）
-        const wrappedWatchSetting = [
-          source,
-          wrapAsyncWatchCallback(callback, (result) => {
-            formEleItemOptionsChangeFn(formItemKey, [], () => result);
-          }),
-          options,
-        ].filter(Boolean);
-        setFormItemWatchInfo(formItemKey, 'options', wrappedWatchSetting);
+        registerLegacyArrayWatch(sourceFormItem.options.watch, 'options');
       } else {
-        const watchSetting = getWatchSetting(
+        setFormItemWatchInfo(
           formItemKey,
-          sourceFormItem.options.watch,
-          formEleItemOptionsChangeFn
+          'options',
+          getLegacyWatchSetting(formItemKey, sourceFormItem.options.watch, 'options')
         );
-        setFormItemWatchInfo(formItemKey, 'options', watchSetting);
       }
     }
+
     // 动态更新校验规则
     if (sourceFormItem?.validate?.watch) {
-      // 数组格式：展开为 Vue3 watch 参数 [source, callback, options?]
-      // 对 callback 进行包装，将其返回值交由 formEleItemValidateChangeFn 更新属性
+      assertLegacyNotString(sourceFormItem.validate.watch, 'validate');
+      warnLegacyWatchOnce(formItemKey, 'validate');
       if (getVarType(sourceFormItem.validate.watch) === 'array') {
-        const [source, callback, options] = sourceFormItem.validate.watch;
-        // 通过 wrapAsyncWatchCallback 支持 callback 返回 Promise（异步生成校验规则）
-
-        const wrappedWatchSetting = [
-          source,
-          wrapAsyncWatchCallback(callback, (result) => {
-            formEleItemValidateChangeFn(formItemKey, [], () => result);
-          }),
-          options,
-        ].filter(Boolean);
-        setFormItemWatchInfo(formItemKey, 'validate', wrappedWatchSetting);
+        registerLegacyArrayWatch(sourceFormItem.validate.watch, 'validate');
       } else {
-        const watchSetting = getWatchSetting(
+        setFormItemWatchInfo(
           formItemKey,
-          sourceFormItem.validate.watch,
-          formEleItemValidateChangeFn
+          'validate',
+          getLegacyWatchSetting(formItemKey, sourceFormItem.validate.watch, 'validate')
         );
-        setFormItemWatchInfo(formItemKey, 'validate', watchSetting);
       }
     }
+
     // 动态更新表单值
     if (sourceFormItem?.value?.watch) {
-      // 数组格式：展开为 Vue3 watch 参数 [source, callback, options?]
-      // 对 callback 进行包装，将其返回值交由 formEleItemBindValueChangeFn 更新属性
+      assertLegacyNotString(sourceFormItem.value.watch, 'value');
+      warnLegacyWatchOnce(formItemKey, 'value');
       if (getVarType(sourceFormItem.value.watch) === 'array') {
-        const [source, callback, options] = sourceFormItem.value.watch;
-
-        // 通过 wrapAsyncWatchCallback 支持 callback 返回 Promise（异步计算表单值）
-        const wrappedWatchSetting = [
-          source,
-          wrapAsyncWatchCallback(callback, (result) => {
-            formEleItemBindValueChangeFn(formItemKey, [], () => result);
-          }),
-          options,
-        ].filter(Boolean);
-        setFormItemWatchInfo(formItemKey, 'value', wrappedWatchSetting);
+        registerLegacyArrayWatch(sourceFormItem.value.watch, 'value');
       } else {
-        const watchSetting = getWatchSetting(
+        setFormItemWatchInfo(
           formItemKey,
-          sourceFormItem.value.watch,
-          formEleItemBindValueChangeFn
+          'value',
+          getLegacyWatchSetting(formItemKey, sourceFormItem.value.watch, 'value')
         );
-        setFormItemWatchInfo(formItemKey, 'value', watchSetting);
       }
     }
 
-    // 动态更新自定义属性
-    // 更新自定义属性的通用逻辑：按属性名更新 formEleComponentAttrsInfo[key][attrKey]
-    const updateFormEleAttr = (key, attrKey, newValue) => {
-      if (!formEleComponentAttrsInfo[key]) {
-        formEleComponentAttrsInfo[key] = {};
-      }
-      if (!formEleComponentAttrsInfo[key][attrKey]) {
-        formEleComponentAttrsInfo[key][attrKey] = ref(newValue);
-      } else {
-        formEleComponentAttrsInfo[key][attrKey].value = newValue;
-      }
-    };
-
-    // 注册单个自定义属性的 watch：attrWatchConfig 支持 { keys, handle } 或数组 [source, callback, options?]
+    // 注册单个自定义属性的旧版 watch：{ keys, handle } 或 [source, callback, option]
     const setAttrWatchConfig = (attrKey, attrWatchConfig) => {
-      if (attrWatchConfig?.keys && attrWatchConfig?.handle) {
-        // 有 keys：标准 watch 配置，通过 getWatchSetting 处理
-        const watchSetting = getWatchSetting(
+      assertLegacyNotString(attrWatchConfig, `attrs(${attrKey})`);
+      warnLegacyWatchOnce(formItemKey, `attrs:${attrKey}`);
+      if (attrWatchConfig?.keys) {
+        setFormItemWatchInfo(
           formItemKey,
-          attrWatchConfig,
-          (key, watchKeys, handle) => {
-            const newValue = handle(getWatchHandleArgs(watchKeys));
-            updateFormEleAttr(key, attrKey, newValue);
-          }
+          'attrs',
+          getLegacyWatchSetting(formItemKey, attrWatchConfig, 'attrs', attrKey)
         );
-        setFormItemWatchInfo(formItemKey, 'attrs', watchSetting);
       } else if (getVarType(attrWatchConfig) === 'array') {
-        // 无 keys 且为数组：展开为 Vue3 watch 参数 [source, handle, options?]
-        // 对 handle 进行包装，将其返回值更新到对应自定义属性
-        // 通过 wrapAsyncWatchCallback 支持 handle 返回 Promise（异步更新自定义属性）
-        const [source, handle, options] = attrWatchConfig;
-        const wrappedWatchSetting = [
-          source,
-          wrapAsyncWatchCallback(handle, (result) => {
-            updateFormEleAttr(formItemKey, attrKey, result);
-          }),
-          options,
-        ].filter(Boolean);
-        setFormItemWatchInfo(formItemKey, 'attrs', wrappedWatchSetting);
+        registerLegacyArrayWatch(attrWatchConfig, 'attrs', attrKey);
+      } else {
+        throw new Error(
+          `[AdvForm] 表单项 "${formItemKey}" 的属性 "${attrKey}" watch 配置不合法`
+        );
       }
     };
 
-    // 方式一：watch[attrKey][watchConfig] —— 表单项 watch 属性按自定义属性名分别配置
-    const watchConfig = sourceFormItem?.watch;
-    if (watchConfig) {
-      for (const [attrKey, attrWatchConfig] of Object.entries(watchConfig)) {
+    // 方式一：watch[attrKey][watchConfig]（对象形态，区别于新版数组）
+    if (sourceFormItem?.watch && !Array.isArray(sourceFormItem.watch)) {
+      for (const [attrKey, attrWatchConfig] of Object.entries(sourceFormItem.watch)) {
         setAttrWatchConfig(attrKey, attrWatchConfig);
       }
     }
@@ -741,7 +823,6 @@ const useAdvForm = (
       'formItemAttrs',
       'defaultValue',
       'placeholder',
-      'encrypt',
       // 输入时过滤/阻止的表单项配置统一收纳于 inputGuard（如 inputGuard: { dateLimit, numberLimit }），
       // 顶层不再出现 dateLimit / numberLimit，避免被当作自定义属性 watch 扫描
       'inputGuard',
@@ -837,9 +918,7 @@ const useAdvForm = (
         }
       }
     }
-    if (UIAttrsTransform) {
-      targetFormItem.attrs = UIAttrsTransform(targetFormItem.attrs);
-    } else if (!sourceFormItem?.attrs) {
+    if (!sourceFormItem?.attrs) {
       targetFormItem.attrs = {};
     }
 
@@ -866,7 +945,6 @@ const useAdvForm = (
         placeholder: sourceFormItem.placeholder,
         ...(sourceFormItem.attrs ?? {}),
         ...(sourceFormItem.events ?? {}),
-        ref: (el) => setFormItemRef(key, el),
       };
     }
     const attrsInfo = formEleComponentAttrsInfo[key] ?? {};
@@ -902,76 +980,28 @@ const useAdvForm = (
     }
   };
 
-  // 计算最大公约数
-  const gcd = (a, b) => {
-    while (b !== 0) {
-      const temp = b;
-      b = a % b;
-      a = temp;
-    }
-    return a;
-  };
-
-  // 计算最小公倍数
-  const lcm = (a, b) => {
-    if (a === 0 || b === 0) return 0;
-    return (a * b) / gcd(a, b);
-  };
-
-  // 计算数组的最小公倍数
-  const lcmOfArray = (arr) => {
-    return arr.reduce((acc, val) => lcm(acc, val), 1);
-  };
-
   // 计算表格网格配置
   const computedGridConfig = ref(null);
 
-  // 初始化表单：拍平二维 / 一维配置、计算网格布局、注册各表单项后一次性启用 watch
+  // 初始化表单：计算网格布局、注册各表单项后一次性启用 watch
   const initForm = (sourceData) => {
     if (sourceData?.length) {
-      let allFormItems = [];
-      const isTwoDimensional = getVarType(sourceData[0]) === 'array';
+      // 一维配置：直接使用，布局完全由 config.grid 与表单项 grid 决定
+      const allFormItems = [...sourceData];
 
-      if (isTwoDimensional) {
-        // 二维数组：记录每行元素个数，转换为一维
-        const rowLengthList = [];
-        for (const sourceRow of sourceData) {
-          rowLengthList.push(sourceRow.length);
-          allFormItems.push(...sourceRow);
-        }
-
-        // 计算最小公倍数作为总列数（仅二维数组时自动计算）
-        const totalCols = lcmOfArray(rowLengthList);
-        computedGridConfig.value = {
-          cols: `repeat(${totalCols}, 1fr)`,
-          rows: _config?.grid?.rows || 'auto',
-          gap: _config?.grid?.gap || '20px',
-        };
-
-        // 为每个表单项设置 grid.col
-        for (const sourceRow of sourceData) {
-          const rowSpan = totalCols / sourceRow.length;
-          sourceRow.forEach((item) => {
-            if (!item.grid) item.grid = {};
-            item.grid.col = `span ${rowSpan}`;
-          });
-        }
-      } else {
-        // 一维数组：使用用户配置的 grid，不自动计算
-        allFormItems.push(...sourceData);
-
-        // 一维数组时，使用用户配置或默认值（默认一行一个）
-        computedGridConfig.value = {
-          cols: _config?.grid?.cols || 'repeat(1, 1fr)',
-          rows: _config?.grid?.rows || 'auto',
-          gap: _config?.grid?.gap || '16px',
-        };
-      }
+      // 使用用户配置或默认值（默认一行一个）
+      computedGridConfig.value = {
+        cols: _config?.grid?.cols || 'repeat(1, 1fr)',
+        rows: _config?.grid?.rows || 'auto',
+        gap: _config?.grid?.gap || '16px',
+      };
 
       // 构建字段 key -> label 映射：供 dateLimit 派生校验提示引用被限制的目标字段名称
       const keyLabelMap = {};
       for (const sourceFormItem of allFormItems) {
         keyLabelMap[sourceFormItem.key] = sourceFormItem.label ?? sourceFormItem.key;
+        // 预先登记控件类型：watch 注册阶段 formItemDict 尚未构建完成
+        formItemTypeMap.set(sourceFormItem.key, sourceFormItem.type);
       }
       const dateLimitLabelCtxOf = (sourceFormItem) => ({
         label: sourceFormItem.label ?? sourceFormItem.key,
@@ -982,7 +1012,7 @@ const useAdvForm = (
       // 依赖字段 inputGuard.dateLimit.targetFieldName 指向本表单某源字段（如计划完工日期 → 计划开工日期）时，
       // 若源字段被用户重选到「使依赖字段当前值失效」的方向（重选开工晚于既有完工 / 重选开始早于既有结束），
       // 旧依赖值已不可能满足约束，直接清空，避免残留旧值触发派生校验误报。
-      // 仅当源字段为用户直接改动（userInputKeys 命中）时触发——setFormData / modelValue 回填与其它联动改动
+      // 仅当源字段为用户直接改动（userInputKeys 命中）时触发——setFormData 回填与其它联动改动
       // 属于权威数据（源字段未被用户碰过），不清空。watch 走 WatchManager，逻辑留在 core/common；
       // 事中面板禁选仍是纯 UI，由 core/ele/guard/date.js 实时判定负责，二者互补。
       const dateLimitSourceClearMap = new Map();
@@ -1038,14 +1068,14 @@ const useAdvForm = (
 
       // 注册 dateLimit 联动清空 watch：每个源字段注册一个（一次源值变更统一清空所有越界依赖字段）。
       // 以源字段当前值为 watch 源，变更时仅当源字段被用户改动过（userInputKeys）才执行；
-      // 清空经 updateFormDataState 写入（有 modelValue 时走防抖 emit 同步父层，无 modelValue 时直写 formDataState）。
+      // 清空经 updateFormDataState 写入（直接写 formDataState 并派发 input）。
       const dayPartOf = (value) =>
         typeof value === 'string' && value.length >= 10 ? value.slice(0, 10) : value;
       for (const [sourceKey, dependentList] of dateLimitSourceClearMap) {
         watchManager.setWatchInfo(`${sourceKey}-dateLimitSourceClear`, [
           () => formDataState[sourceKey],
           () => {
-            // 非用户改动（回填 / modelValue 加载 / 其它联动）不清空，保护权威数据
+            // 非用户改动（回填 / 其它联动）不清空，保护权威数据
             if (!userInputKeys.has(sourceKey)) return;
             const sourceValue = formDataState[sourceKey];
             if (!sourceValue) return;
@@ -1070,7 +1100,8 @@ const useAdvForm = (
   };
 
   // 提交表单：校验通过后按 get 变换生成提交数据并派发结果
-  const submit = () => {
+  // withOptionItems 为 true 时 resolve { data, optionItems }；默认仍返回提交数据本身，兼容现有调用方
+  const submit = ({ withOptionItems = false } = {}) => {
     return new Promise((res, rej) => {
       formRef.value
         .validate()
@@ -1086,7 +1117,7 @@ const useAdvForm = (
               let realValue;
               if (sourceValue !== undefined && sourceValue !== null) {
                 if (formItemHasDataTransform(key)) {
-                  // submit 提交数据时应用 get 变换（如 encrypt 字段在此加密）
+                  // submit 提交数据时应用 get 变换
                   realValue = formItem.get(sourceValue);
                 } else {
                   if (sourceValue instanceof File || sourceValue instanceof Blob) {
@@ -1107,8 +1138,13 @@ const useAdvForm = (
               submitData[key] = realValue;
             }
           }
-          res(submitData);
-          emits('validateSuccess', submitData);
+          // 合并 setFormData 暂存的未配置字段：恢复原语义"不在配置中的字段原样提交"
+          // formDataState 里已无这些 key，因此直接 spread 不会覆盖已配置字段
+          Object.assign(submitData, externalFormDataBuffer);
+          // 选中项对象与提交数据并列返回，不混入提交数据本体
+          const optionItems = collectSelectedOptionItems(Object.keys(submitData));
+          emits('validateSuccess', submitData, optionItems);
+          res(withOptionItems ? { data: submitData, optionItems } : submitData);
         })
         .catch((err) => {
           console.log('验证失败', err);
@@ -1120,12 +1156,18 @@ const useAdvForm = (
 
   // 清空表单数据：有 defaultValue 的字段重置为默认值，其余置空
   const clearFormData = () => {
+    // 同步清空未配置字段缓冲，避免关闭弹窗 / 重置后再提交还残留上一次的未配置字段
+    externalFormDataBuffer = {};
+    // 程序化批量写值期间不派发 input
+    isApplyingFormData = true;
     for (const key of Object.keys(formDataState)) {
       const formItem = formItemRowList.value.find((i) => i.key === key);
       if (Reflect.has(formItem, 'defaultValue')) {
         if (getVarType(formItem.defaultValue) === 'asyncFunction') {
           formItem.defaultValue().then((res) => {
+            isApplyingFormData = true;
             formDataState[key] = res;
+            isApplyingFormData = false;
           });
         } else if (typeof formItem.defaultValue === 'function') {
           formDataState[key] = formItem.defaultValue();
@@ -1136,17 +1178,13 @@ const useAdvForm = (
         formDataState[key] = undefined;
       }
     }
+    isApplyingFormData = false;
   };
 
   initForm(_config.list);
 
   onUnmounted(() => {
     watchManager.clear();
-    if (modelValueUpdateTimer !== null) {
-      clearTimeout(modelValueUpdateTimer);
-      modelValueUpdateTimer = null;
-      pendingModelValueCache = {};
-    }
   });
 
   // 提交按钮点击处理（忽略校验失败，失败统一由 emits('validateFail') 派发）
@@ -1158,17 +1196,17 @@ const useAdvForm = (
   // 数字 0（如开关量、数量、序号）与布尔 false 均为有效业务值，不算空值
   const isBlankFormDataValue = (value) => value === undefined || value === null || value === '';
 
-  // 回填表单数据：赋值期间暂时停用 value / options 类型 watch，并开启“回填值保护”，避免覆盖本次回填数据
-  const setFormData = (formData) => {
+  // 回填表单数据：默认局部合并（未传入字段保持不变，未配置字段缓冲与回填保护集合累积）；
+  // replace 为 true 时先整表重置（已配置字段置空、缓冲与保护集合清空），再写入本次数据
+  const setFormData = (formData, { replace = false } = {}) => {
     const configuredKeySet = getConfiguredFormItemKeySet();
-    // 开启新一轮回填保护：以本次显式提供的字段 key 作为受保护集合，并清空上一轮的用户改动记录
-    externallyProvidedKeys.clear();
-    userInputKeys.clear();
-    for (const providedKey of Object.keys(formData)) {
-      // 未在 props.config.list 中配置的 key 不属于本表单，跳过（不纳入回填值保护集合）
-      if (!configuredKeySet.has(String(providedKey))) continue;
-      externallyProvidedKeys.add(providedKey);
+    if (replace) {
+      // 整表重载：清空透传缓冲与回填保护集合
+      externalFormDataBuffer = {};
+      externallyProvidedKeys.clear();
     }
+    // 新一轮回填清空用户改动记录，避免旧交互影响本次回填
+    userInputKeys.clear();
     // 回填期间暂时停用 value（动态计算字段值）与 options（动态选项）两类联动 watch：
     // 避免它们基于回填过程中的中间值/旧值或异步选项结果回写、清空本次表单值；
     // show/validate/attrs 等其余类型的 watch 保持生效，以基于回填后的数据刷新派生状态。
@@ -1180,23 +1218,41 @@ const useAdvForm = (
     for (const formItemKey of optionsTypeFormItemKeys) {
       watchManager.pauseWatch(`${formItemKey}-options`);
     }
-    for (const [key, val] of Object.entries(formData)) {
-      // 未在 props.config.list 中配置的 key 不属于本表单表单项，跳过不写入表单数据
-      if (!configuredKeySet.has(String(key))) continue;
-      const formItem = formItemDict.value[key];
-      // 空值不回填：后端返回 undefined / null / 空字符串时，若该表单项配置了 defaultValue，
-      // 则保留 initForm（setFormDataState）阶段写入的默认值，避免回填把默认值清空——
-      // 使「后端未返回该字段」与「后端返回空值」两种情形表现一致。
-      // 注意 0 与 false 是有效值，不算空值，需正常回填。
-      if (isBlankFormDataValue(val) && formItem && Reflect.has(formItem, 'defaultValue')) {
-        continue;
+    // 程序化批量写值期间不派发 input
+    isApplyingFormData = true;
+    try {
+      if (replace) {
+        // 整表重载：已配置字段先置空，未传入的字段不会残留上一次的值
+        for (const formItem of formItemRowList.value) {
+          formDataState[formItem.key] = undefined;
+        }
       }
-      if (formItemHasDataTransform(key)) {
-        // setFormData 设置表单数据时应用 set 变换（如 encrypt 字段在此解密）
-        formDataState[key] = formItem.set(val);
-      } else {
-        formDataState[key] = val;
+      // 单次遍历：已配置字段写入 formDataState 并纳入回填值保护；
+      // 未配置字段累积到缓冲供 submit 原样透传（局部合并时不丢弃上一轮缓冲）
+      for (const [key, val] of Object.entries(formData)) {
+        if (!configuredKeySet.has(String(key))) {
+          // 未配置 key 不进入 formDataState，UI 不显示、watch 不处理；但保留值供 submit 原样提交
+          externalFormDataBuffer[key] = val;
+          continue;
+        }
+        externallyProvidedKeys.add(key);
+        const formItem = formItemDict.value[key];
+        // 空值不回填：后端返回 undefined / null / 空字符串时，若该表单项配置了 defaultValue，
+        // 则保留 initForm（setFormDataState）阶段写入的默认值，避免回填把默认值清空——
+        // 使"后端未返回该字段"与"后端返回空值"两种情形表现一致。
+        // 注意 0 与 false 是有效值，不算空值，需正常回填。
+        if (isBlankFormDataValue(val) && formItem && Reflect.has(formItem, 'defaultValue')) {
+          continue;
+        }
+        if (formItemHasDataTransform(key)) {
+          // setFormData 设置表单数据时应用 set 变换
+          formDataState[key] = formItem.set(val);
+        } else {
+          formDataState[key] = val;
+        }
       }
+    } finally {
+      isApplyingFormData = false;
     }
     for (const formItemKey of valueTypeFormItemKeys) {
       watchManager.resumeWatch(`${formItemKey}-value`);
@@ -1206,23 +1262,56 @@ const useAdvForm = (
     }
   };
 
+  // 局部写入单个字段：直写内部状态（不应用 set 变换），并派发 input 事件
+  // 未在 config.list 中配置的 key 直接忽略，避免产生游离字段
+  const updateFormData = (key, value) => {
+    if (!formItemDict.value[key]) return;
+    updateFormDataState(key, value);
+  };
+
+  // 读取当前表单值快照：不触发校验；transform 为 true 时按 get 变换输出（与 submit 一致）
+  const getFormData = ({ transform = false } = {}) => {
+    const data = {};
+    for (const formItem of formItemRowList.value) {
+      const key = formItem.key;
+      const sourceValue = formDataState[key];
+      if (transform && formItemHasDataTransform(key) && sourceValue != null) {
+        data[key] = formItem.get(sourceValue);
+        continue;
+      }
+      // 与 submit 保持一致的轻量拷贝，避免外部直接改动内部引用
+      if (sourceValue instanceof File || sourceValue instanceof Blob) {
+        data[key] = sourceValue;
+      } else if (Array.isArray(sourceValue)) {
+        data[key] = [...sourceValue];
+      } else if (sourceValue && typeof sourceValue === 'object') {
+        data[key] = { ...sourceValue };
+      } else {
+        data[key] = sourceValue;
+      }
+    }
+    return data;
+  };
+
+  // 只读表单数据：供外部 watch 指定字段，写入仍须走 setFormData / updateFormData
+  const readonlyFormData = readonly(formDataState);
+
   const defineExposeConfig = {
     submit,
     clearFormData,
     setFormData,
+    updateFormData,
+    getFormData,
+    formData: readonlyFormData,
   };
 
   return {
     formItemRowList: formItemRowList,
-    formItemDict: formItemDict,
     formDataState: formDataState,
     validateRules: validateRules,
     getFormEleComponentProps,
     formEleComponentShowInfo: formEleComponentShowInfo,
     formEleComponentOptionsInfo: formEleComponentOptionsInfo,
-    formEleComponentAttrsInfo: formEleComponentAttrsInfo,
-    setFormItemRef,
-    getFormItemRef,
     submit,
     submitButtonClickHandler,
     clearFormData,

@@ -68,16 +68,16 @@
     useSlots,
   } from 'vue';
   import {
-    ElButton,
     ElSwitch,
     ElCheckbox,
     ElInput,
     ElInputNumber,
     ElSelect,
     ElOption,
-    ElPopconfirm,
   } from 'element-plus';
   import { useRecordList, recordListProps, recordListEmits } from '../common/recordList.js';
+  // 按钮统一由 AdvButton 渲染
+  import AdvButton from '@common/components/AdvButton';
 
   /**
    * 组件属性定义
@@ -181,7 +181,7 @@
         return renderColumnSlot(column.key, rowData);
       }
       return h(
-        ElButton,
+        AdvButton,
         {
           size: 'small',
           link: true,
@@ -193,7 +193,7 @@
     },
 
     /**
-     * 弹窗列渲染
+     * 弹窗列渲染：按钮自带 modal，行数据作为打开入参
      */
     openModal: ({ column, rowData }) => {
       // 优先检查是否存在自定义插槽
@@ -201,12 +201,17 @@
         return renderColumnSlot(column.key, rowData);
       }
       return h(
-        ElButton,
+        AdvButton,
         {
           size: 'small',
           link: true,
           type: 'primary',
+          modal: column.modal,
+          modalPayload: rowData[ctxSymbol.for('originalData')] ?? rowData,
           onClick: () => columnEventHandler(column, rowData),
+          // 弹窗内操作完成后刷新当前页数据
+          onReloadList: () => getListData(),
+          ...(column.attrs || {}),
         },
         () =>
           typeof column.text === 'function'
@@ -303,52 +308,12 @@
           continue;
         }
 
-        if (operaterItem.type === 'button') {
+        // 统一按钮：confirm / download / modal 由 AdvButton 处理
+        if (operaterItem.type !== 'formItemOperater') {
           buttons.push(
             h(
-              ElButton,
-              {
-                size: 'small',
-                link: true,
-                type: 'primary',
-                onClick: () => operaterItemEventHandler(operaterItem, rowData),
-              },
-              () => operaterItem.text
-            )
-          );
-        } else if (operaterItem.type === 'confirm') {
-          buttons.push(
-            h(
-              ElPopconfirm,
-              {
-                title: `是否确认${operaterItem.text}？`,
-                onConfirm: () => operaterItemEventHandler(operaterItem, rowData, 'confirm'),
-                onCancel: () => operaterItemEventHandler(operaterItem, rowData, 'cancel'),
-              },
-              {
-                reference: () =>
-                  h(
-                    ElButton,
-                    {
-                      size: 'small',
-                      link: true,
-                      type: 'primary',
-                    },
-                    () => operaterItem.text
-                  ),
-              }
-            )
-          );
-        } else if (operaterItem.type === 'openModal') {
-          buttons.push(
-            h(
-              ElButton,
-              {
-                size: 'small',
-                link: true,
-                type: 'primary',
-                onClick: () => operaterItemEventHandler(operaterItem, rowData),
-              },
+              AdvButton,
+              resolveOperaterButtonProps(operaterItem, rowData),
               () => operaterItem.text
             )
           );
@@ -511,7 +476,7 @@
     loading,
     formData,
     formItemInputEventHandler,
-    operaterItemEventHandler,
+    resolveOperaterButtonProps,
     columnEventHandler,
     setFilterParams,
     clearFilterParams,

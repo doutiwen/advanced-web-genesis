@@ -8,7 +8,7 @@
  * | 状态名 | 类型 | 说明 |
  * |--------|------|------|
  * | show | Boolean | 弹窗显示状态 |
- * | data | Any | 弹窗数据 |
+ * | bindData | Any | 弹窗绑定数据 |
  * | loading | Boolean | 数据加载状态 |
  * | okButtonLoading | Boolean | 确认按钮加载状态 |
  * | cancelButtonLoading | Boolean | 取消按钮加载状态 |
@@ -19,15 +19,15 @@
  * | 方法名 | 说明 | 参数 |
  * |--------|------|------|
  * | openModal | 打开弹窗 | payload (数据), validateFn (验证方法) |
- * | closeModal | 关闭弹窗 | refreshRecordList, resetFormData |
+ * | closeModal | 关闭弹窗 | reloadList, resetFormData |
  * | modalButtonEventHandler | 按钮事件处理 | type ('ok' | 'cancel') |
  * | handleCancel | 取消处理（取消按钮/关闭图标共用） | 无 |
- * | getModalData | 获取弹窗数据 | 无 |
+ * | getBindData | 获取弹窗数据 | 无 |
  *
  * 【按钮文案】
  * okButton.text 支持两种形式：
  * - 字符串：初始化即解析
- * - 方法 (modalData) => String：按弹窗数据计算文案（如"提交"/"暂存"）
+ * - 方法 (modalBindData) => String：按弹窗数据计算文案（如"提交"/"暂存"）
  * 解析统一由 refreshOkButtonText 完成，结果缓存在 state.okButtonText 供渲染读取，
  * 方法不在渲染期执行（原因见 getOkButtonText 注释）
  */
@@ -39,7 +39,7 @@ import { ref, nextTick } from 'vue';
  *
  * okButton.text 支持两种形式：
  * - 字符串：固定文案，初始化即落库
- * - 方法 (modalData) => String：按弹窗数据计算文案（如"提交"/"暂存"）
+ * - 方法 (modalBindData) => String：按弹窗数据计算文案（如"提交"/"暂存"）
  *
  * 【方法形式不在渲染期执行】弹窗内容渲染在 Element Plus Overlay 的渲染副作用内
  * （footer 由 ElOverlay 的 default 插槽渲染，见 drawer/dialog 源码的 withCtx 结构），
@@ -48,20 +48,20 @@ import { ref, nextTick } from 'vue';
  * 因此方法统一由 refreshOkButtonText 在「数据落库后」调用一次，结果缓存到 state.okButtonText，
  * 渲染只读缓存值；同时缓存值本身是响应式的，数据变化后重新解析即可自动刷新文案。
  *
- * 这里仍保留 try/catch 兜底：调用点之一位于 getData 的 promise 回调中，
+ * 这里仍保留 try/catch 兜底：调用点之一位于 getBindData 的 promise 回调中，
  * 用户方法抛错若不拦截会变成未处理的 promise 拒绝；控制台保留告警便于定位。
  *
  * @param {Object} okButton - 确认按钮配置对象（config.okButton）
- * @param {Any} modalData - 当前弹窗数据（getData / payload 的结果）
+ * @param {Any} modalBindData - 当前弹窗数据（getBindData / payload 的结果）
  * @returns {String|undefined} 解析后的文案；未配置、方法返回空值或方法执行出错时返回 undefined，由调用方决定兜底文案
  */
-const getOkButtonText = (okButton, modalData) => {
+const getOkButtonText = (okButton, modalBindData) => {
   const { text } = okButton || {};
   if (typeof text === 'function') {
     try {
-      return text(modalData) || undefined;
+      return text(modalBindData) || undefined;
     } catch (err) {
-      // 方法内取值失败（如异步 getData 未返回时对 null 取属性）：降级为默认文案，不向上抛
+      // 方法内取值失败（如异步 getBindData 未返回时对 null 取属性）：降级为默认文案，不向上抛
       console.warn('[AdvModal] okButton.text 方法执行失败，本次回退默认文案：', err);
       return undefined;
     }
@@ -85,7 +85,7 @@ const advModalItemProps = {
 /**
  * AdvModalItem 事件定义
  */
-const advModalItemEmits = ['modalOpen', 'modalClose', 'refreshRecordList', 'modalOpenFail'];
+const advModalItemEmits = ['modalOpen', 'modalClose', 'reloadList'];
 
 /**
  * 使用 AdvModalItem Hook
@@ -101,7 +101,7 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
    */
   const state = {
     show: ref(false),
-    data: ref(null),
+    bindData: ref(null),
     loading: ref(false),
     okButtonLoading: ref(false),
     okButtonDisable: ref(false),
@@ -122,8 +122,10 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
   };
 
   /**
-   * 调用表单的 setFormData() 载入数据（触发表单项的 set 变换）
-   * 传入的是 getData / openModal payload 的载入数据，不是 bindFormData
+   * 显式调用表单的 setFormData()，按表单配置回填数据（可触发表单项的 set 变换）
+   * AdvForm 的 set 变换仅在显式调用 setFormData() 时触发，modelValue 绑定不会触发；
+   * 弹窗以原样数据打开时，需显式调用 setFormData() 才能让表单项按配置处理数据。
+   * 传入的是 getBindData / openModal payload 的载入数据，不是 bindFormData
    * （bindFormData 仅作组件内部 watch 的实时镜像，不作载入载体）
    * @param {Object} formData - 弹窗表单载入数据
    */
@@ -134,11 +136,11 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
 
   /**
    * 解析确认按钮文案并缓存到 state.okButtonText
-   * 调用时机只有「弹窗数据已落库」两处：openModal 的非异步 getData 分支、
-   * 异步 getData 的 then 回调（详见 getOkButtonText 注释，方法不放在渲染期执行）
+   * 调用时机只有「弹窗数据已落库」两处：openModal 的非异步 getBindData 分支、
+   * 异步 getBindData 的 then 回调（详见 getOkButtonText 注释，方法不放在渲染期执行）
    */
   const refreshOkButtonText = () => {
-    state.okButtonText.value = getOkButtonText(props.config?.okButton, state.data.value);
+    state.okButtonText.value = getOkButtonText(props.config?.okButton, state.bindData.value);
   };
 
   const init = () => {
@@ -183,7 +185,7 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
       state.watchManager.registerWatch('okButtonDisable');
     }
     // 字符串文案与数据无关，初始化即落库（此后不再变更），避免关闭态 DOM 首帧显示默认文案；
-    // 方法形式必须等数据落库后才能解析（异步 getData 未返回时 modalData 为 null，不能提前调用）
+    // 方法形式必须等数据落库后才能解析（异步 getBindData 未返回时 modalBindData 为 null，不能提前调用）
     if (typeof props.config?.okButton?.text !== 'function') {
       refreshOkButtonText();
     }
@@ -196,24 +198,24 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
   const openModal = (payload) => {
     const validateFn = props.config.openModalValidate;
     if (typeof validateFn === 'function' && !validateFn(payload)) {
-      emits('modalOpenFail', { key: props.config.key, data: payload });
+      emits('modalOpenFail', { bindData: payload });
     } else {
       if (props.config?.form) {
         // bindFormData 仅作组件内部 watch 的实时镜像：每次打开重置为空对象，
-        // 其值只由用户编辑经 input 事件累积，不承载 getData / payload 的载入数据。
-        // 表单载入统一走 setFormData（下方），以触发表单项的 set 变换
+        // 其值只由用户编辑经 v-model 回写累积，不承载 getBindData / payload 的载入数据。
+        // 表单载入统一走 setFormData（下方），按表单配置回填数据
         state.bindFormData.value = {};
-        if (getVarType(props.config.getData) === 'asyncFunction') {
+        if (getVarType(props.config.getBindData) === 'asyncFunction') {
           state.loading.value = true;
-          const getDataFnParams = payload;
+          const getBindDataFnParams = payload;
           props.config
-            .getData(getDataFnParams)
+            .getBindData(getBindDataFnParams)
             .then((res) => {
-              state.data.value = res;
+              state.bindData.value = res;
               // 异步数据已落库，此刻才能解析按钮文案（见 getOkButtonText 注释）
               refreshOkButtonText();
-              // getData 结果直接作为表单载入数据，不写入 bindFormData；
-              // 异步取数返回后，等表单挂载完成再显式调用 setFormData，触发表单项的 set 变换
+              // getBindData 结果直接作为表单载入数据，不写入 bindFormData；
+              // 异步取数返回后，等表单挂载完成再显式调用 setFormData，按表单配置回填数据
               const formPayload = { ...res };
               nextTick(() => {
                 nextTick(() => {
@@ -226,16 +228,16 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
             });
         } else {
           let formPayload;
-          if (typeof props.config.getData === 'function') {
-            const getDataFnParams = payload;
-            const data = props.config.getData(getDataFnParams);
-            state.data.value = data;
-            formPayload = { ...data };
+          if (typeof props.config.getBindData === 'function') {
+            const getBindDataFnParams = payload;
+            const bindData = props.config.getBindData(getBindDataFnParams);
+            state.bindData.value = bindData;
+            formPayload = { ...bindData };
           } else if (payload) {
-            state.data.value = payload;
+            state.bindData.value = payload;
             formPayload = JSON.parse(JSON.stringify(payload));
           }
-          // 弹窗展示后表单才挂载，nextTick 后 formRef 可用；显式调用 setFormData 触发表单项的 set 变换
+          // 弹窗展示后表单才挂载，nextTick 后 formRef 可用；显式调用 setFormData 按表单配置回填数据
           nextTick(() => {
             nextTick(() => {
               applyFormDataToForm(formPayload);
@@ -243,13 +245,13 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
           });
         }
       } else {
-        if (getVarType(props.config.getData) === 'asyncFunction') {
+        if (getVarType(props.config.getBindData) === 'asyncFunction') {
           state.loading.value = true;
-          const getDataFnParams = payload;
+          const getBindDataFnParams = payload;
           props.config
-            .getData(getDataFnParams)
+            .getBindData(getBindDataFnParams)
             .then((res) => {
-              state.data.value = res;
+              state.bindData.value = res;
               // 异步数据已落库，此刻才能解析按钮文案（见 getOkButtonText 注释）
               refreshOkButtonText();
             })
@@ -257,37 +259,37 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
               state.loading.value = false;
             });
         } else {
-          if (typeof props.config.getData === 'function') {
-            const getDataFnParams = payload;
-            state.data.value = props.config.getData(getDataFnParams);
-            console.log('state.data.value:', state.data.value);
+          if (typeof props.config.getBindData === 'function') {
+            const getBindDataFnParams = payload;
+            state.bindData.value = props.config.getBindData(getBindDataFnParams);
+            console.log('state.bindData.value:', state.bindData.value);
           } else if (payload) {
-            state.data.value = JSON.parse(JSON.stringify(payload));
+            state.bindData.value = JSON.parse(JSON.stringify(payload));
           }
         }
       }
       // 重新打开时恢复 okButtonDisable 监听，确保确认按钮禁用状态随最新数据重新计算
       state.watchManager.resumeWatch('okButtonDisable');
-      // 确认按钮文案：非异步 getData 的数据此刻已落库，直接解析；
-      // 异步 getData 的数据要等接口返回（此刻 state.data 还是上次打开的值），
+      // 确认按钮文案：非异步 getBindData 的数据此刻已落库，直接解析；
+      // 异步 getBindData 的数据要等接口返回（此刻 state.bindData 还是上次打开的值），
       // 先清空缓存让按钮回退默认文案，待数据在 then 回调中落库后再解析
-      if (getVarType(props.config?.getData) === 'asyncFunction') {
+      if (getVarType(props.config?.getBindData) === 'asyncFunction') {
         state.okButtonText.value = undefined;
       } else {
         refreshOkButtonText();
       }
       state.show.value = true;
 
-      emits('modalOpen', { key: props.config.key, data: state.data.value });
+      emits('modalOpen', { bindData: state.bindData.value });
     }
   };
 
   /**
    * 关闭弹窗
-   * @param {Boolean} refreshRecordList - 是否刷新列表
+   * @param {Boolean} reloadList - 是否刷新列表
    * @param {Boolean} resetFormData - 是否重置表单数据
    */
-  const closeModal = (refreshRecordList = false, resetFormData = true) => {
+  const closeModal = (reloadList = false, resetFormData = true) => {
     state.show.value = false;
     // 关闭时不销毁 okButtonDisable 监听，仅暂停；重新打开时恢复，避免监听失效后确认按钮状态无法重新计算
     state.watchManager.pauseWatch('okButtonDisable');
@@ -297,31 +299,31 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
       // bindFormData 仅作内部 watch 的实时镜像，关闭后重置为空对象，避免下次打开残留上次编辑值
       state.bindFormData.value = {};
     }
-    if (refreshRecordList) {
-      emits('refreshRecordList');
+    if (reloadList) {
+      emits('reloadList');
     }
-    emits('modalClose', { key: props.config.key, data: state.data.value });
+    emits('modalClose', { bindData: state.bindData.value });
   };
 
   /**
    * 取消处理（底部取消按钮 / 右上角关闭图标共用）
-   * cancelButton.fn 未返回任何值时，直接关闭弹窗
+   * cancelButton.onClick 未返回任何值时，直接关闭弹窗
    * @returns {Boolean} 是否已关闭弹窗
    */
   const handleCancel = () => {
-    if (props.config?.cancelButton?.fn) {
-      const result = props.config.cancelButton.fn(state.data.value, state.bindFormData.value);
+    if (props.config?.cancelButton?.onClick) {
+      const result = props.config.cancelButton.onClick(state.bindData.value, state.bindFormData.value);
       if (result == null) {
-        // cancelButton.fn 未返回任何值，视为允许关闭
+        // cancelButton.onClick 未返回任何值，视为允许关闭
         closeModal();
         return true;
       }
-      const { close, refreshRecordList, resetFormData, message: msg } = result;
+      const { close, reloadList, resetFormData, message: msg } = result;
       if (msg && typeof message === 'function') {
         message(msg);
       }
       if (close) {
-        closeModal(refreshRecordList, resetFormData);
+        closeModal(reloadList, resetFormData);
         return true;
       }
       return false;
@@ -362,32 +364,39 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
           state.formRef
             .submit()
             .then((res) => {
-              if (getVarType(props.config?.okButton?.fn) === 'asyncFunction') {
+              if (getVarType(props.config?.okButton?.onClick) === 'asyncFunction') {
                 state.okButtonLoading.value = true;
                 props.config.okButton
-                  .fn(state.data.value, res)
+                  .onClick(state.bindData.value, res)
                   .then((result) => {
-                    const { refreshRecordList, resetFormData, message: msg } = result || {};
+                    // 与同步分支保持一致：未返回任何值视为允许关闭；返回对象时按 close 决定是否关闭
+                    if (result == null) {
+                      closeModal();
+                      return;
+                    }
+                    const { close, reloadList, resetFormData, message: msg } = result;
                     if (msg && typeof message === 'function') {
                       message(msg);
                     }
-                    closeModal(refreshRecordList, resetFormData);
+                    if (close) {
+                      closeModal(reloadList, resetFormData);
+                    }
                   })
                   .finally(() => {
                     state.okButtonLoading.value = false;
                   });
-              } else if (typeof props.config?.okButton?.fn === 'function') {
-                const result = props.config.okButton.fn(state.data.value, res);
+              } else if (typeof props.config?.okButton?.onClick === 'function') {
+                const result = props.config.okButton.onClick(state.bindData.value, res);
                 if (result == null) {
-                  // okButton.fn 未返回任何值，视为允许关闭
+                  // okButton.onClick 未返回任何值，视为允许关闭
                   closeModal();
                 } else {
-                  const { close, refreshRecordList, resetFormData, message: msg } = result;
+                  const { close, reloadList, resetFormData, message: msg } = result;
                   if (msg && typeof message === 'function') {
                     message(msg);
                   }
                   if (close) {
-                    closeModal(refreshRecordList, resetFormData);
+                    closeModal(reloadList, resetFormData);
                   }
                 }
               } else {
@@ -396,39 +405,39 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
             })
             .catch(() => {});
         } else {
-          if (getVarType(props.config?.okButton?.fn) === 'asyncFunction') {
+          if (getVarType(props.config?.okButton?.onClick) === 'asyncFunction') {
             state.okButtonLoading.value = true;
             props.config.okButton
-              .fn(state.data.value)
+              .onClick(state.bindData.value)
               .then((result) => {
                 if (result == null) {
-                  // okButton.fn 未返回任何值，视为允许关闭
+                  // okButton.onClick 未返回任何值，视为允许关闭
                   closeModal();
                   return;
                 }
-                const { close, refreshRecordList, message: msg } = result;
+                const { close, reloadList, message: msg } = result;
                 if (msg && typeof message === 'function') {
                   message(msg);
                 }
                 if (close) {
-                  closeModal(refreshRecordList);
+                  closeModal(reloadList);
                 }
               })
               .finally(() => {
                 state.okButtonLoading.value = false;
               });
-          } else if (typeof props.config?.okButton?.fn === 'function') {
-            const result = props.config.okButton.fn(state.data.value);
+          } else if (typeof props.config?.okButton?.onClick === 'function') {
+            const result = props.config.okButton.onClick(state.bindData.value);
             if (result == null) {
-              // okButton.fn 未返回任何值，视为允许关闭
+              // okButton.onClick 未返回任何值，视为允许关闭
               closeModal();
             } else {
-              const { close, refreshRecordList, message: msg } = result;
+              const { close, reloadList, message: msg } = result;
               if (msg && typeof message === 'function') {
                 message(msg);
               }
               if (close) {
-                closeModal(refreshRecordList);
+                closeModal(reloadList);
               }
             }
           } else {
@@ -448,9 +457,29 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
    * 获取弹窗数据
    * @returns {Any} 弹窗数据
    */
-  const getModalData = () => {
-    return state.data.value;
+  const getBindData = () => {
+    return state.bindData.value;
   };
+
+  //对表单中的select组件的options方法（同步和异步）进行再包装，扩展一个模态框数据参数
+  const formConfig = {};
+  if (props.config?.form) {
+    Object.assign(formConfig, props.config?.form);
+    for (const formItem of formConfig.list) {
+      if (formItem.type === 'select' && typeof formItem?.options === 'function') {
+        const sourceGetOptionsFn = formItem.options;
+        if (getVarType(sourceGetOptionsFn) === 'function') {
+          formItem.options = (formState) => {
+            return sourceGetOptionsFn(formState, state.bindData.value);
+          };
+        } else if (getVarType(sourceGetOptionsFn) === 'asyncFunction') {
+          formItem.options = async (formState) => {
+            return await sourceGetOptionsFn(formState, state.bindData.value);
+          };
+        }
+      }
+    }
+  }
 
   /**
    * 暴露给父组件的方法配置
@@ -458,7 +487,7 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
   const defineExposeConfig = {
     openModal,
     closeModal,
-    getModalData,
+    getBindData,
   };
 
   init();
@@ -469,6 +498,7 @@ const useAdvModalItem = (props, emits, message, messageBox) => {
     modalButtonEventHandler,
     handleCancel,
     defineExposeConfig,
+    formConfig,
   };
 };
 

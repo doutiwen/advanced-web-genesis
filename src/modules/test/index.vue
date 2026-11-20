@@ -6,7 +6,7 @@
         @click="handleClick"
         type="primary"
         throttleTime="1000"
-        confirmNotice="确认点击吗？"
+        :confirm="{ notice: '确认点击吗？' }"
       >
         点击我
       </AdvButton>

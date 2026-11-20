@@ -98,7 +98,13 @@ export default defineConfig(({ command, mode }) => {
         {
           // UI 能力门面：业务代码永远只写 import ui from '@ui-kit'，由此处决定指向哪个库的实现
           find: /^@ui-kit$/,
-          replacement: resolve(__dirname, `src/ui/${UI_LIB}.js`),
+          replacement: resolve(__dirname, `src/genesis/ui/${UI_LIB}.js`),
+        },
+        {
+          // 通用组件/工具层别名：'@common/xxx' → 'src/genesis/xxx'
+          // 末尾必须保留 '/'，否则正则替换会拼出 'src/genesiscomponents/...'
+          find: /^@common\//,
+          replacement: `${resolve(__dirname, 'src/genesis')}/`,
         },
         { find: '@', replacement: resolve(__dirname, 'src') },
         {

@@ -3,7 +3,7 @@
   <!-- 根据权限控制显示，支持节流点击和异步加载状态 -->
   <a-button
     v-bind="_attrs"
-    :loading="isLoading"
+    :loading="isLoading || _attrs.loading"
     @click="throttleClick"
   >
     <!-- 插槽透传：将所有插槽内容透传给 a-button -->
@@ -39,10 +39,15 @@
    * |--------|------|------|
    * | throttleTime | Number \| String | 节流时间（毫秒），大于 0 时启用节流 |
    * | throttleNotice | String | 节流触发时的提示文案，默认"您点击过快，请稍后再试" |
-   * | confirm | Boolean | 是否需要确认弹窗，为 true 时点击后先弹出确认对话框 |
-   * | confirmNotice | String | 确认弹窗的提示消息，默认"是否确认执行此操作？" |
+   * | confirm | Boolean \| Object | 再次确认配置；true 用默认值，对象支持 title/notice/okText/cancelText/type/attrs/beforeConfirm |
+   * | download | String \| Blob \| Object | 下载配置；传入后点击执行下载，不再执行 onClick |
+   *
+   * 【confirm 配置】
+   * 与 ele 版完全一致（见 core/common/index.js 的 confirmDefaults），
+   * 其中 attrs 的 Element Plus 选项名由 ui/ant.js 映射为 antd 选项名。
    *
    * 【与 ele 版的差异】
+   * modal 弹窗能力目前仅 ele 版实现（AdvModal 依赖 element-plus），ant 版不接入。
    * attrs 原样透传给 a-button，不做 props 语义转换，
    * 因此调用方需按 Ant Design Vue 规范书写按钮属性，例如：
    * 危险按钮写 type="primary" danger（而非 element 的 type="danger"），
@@ -63,8 +68,11 @@
    *   <!-- 确认弹窗 -->
    *   <AdvButtonAnt confirm onClick="handleDelete">删除</AdvButtonAnt>
    *
-   *   <!-- 确认弹窗（自定义消息） -->
-   *   <AdvButtonAnt confirm confirmNotice="确定要删除这条数据吗？" onClick="handleDelete">删除</AdvButtonAnt>
+   *   <!-- 确认弹窗（自定义配置） -->
+   *   <AdvButtonAnt :confirm="{ notice: '确定要删除这条数据吗？' }" onClick="handleDelete">删除</AdvButtonAnt>
+   *
+   *   <!-- 下载：直链或二进制数据，组件内不发起请求 -->
+   *   <AdvButtonAnt download="/static/template.xlsx">下载模板</AdvButtonAnt>
    * </template>
    */
 
@@ -94,13 +102,7 @@
 
   /**
    * 使用按钮 Hook，获取加载状态和点击处理函数
-   * 注入 UI 门面提供的确认弹窗与警告提示方法
+   * 注入 UI 门面，确认弹窗与提示方法由 hook 内部按需取用
    */
-  const { isLoading, throttleClick } = useAdvButton(
-    props,
-    attrs,
-    route,
-    ui.confirm,
-    ui.message.warning
-  );
+  const { isLoading, throttleClick } = useAdvButton(props, attrs, route, ui);
 </script>

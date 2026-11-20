@@ -18,13 +18,11 @@
  * | checkbox | 多选框 | 批量筛选 |
  * | date | 日期选择 | 时间范围 |
  * | time | 时间选择 | 时间段 |
- * | batch | 批量操作按钮 | 批量删除 |
- * | openModal | 打开弹窗按钮 | 添加按钮 |
- * | openMoreSearch | 更多搜索按钮 | 高级搜索 |
- * | button | 普通按钮 | 导出按钮 |
+ * | batch | 批量操作按钮 | 批量删除（ok/cancel 使用 onClick） |
+ * | openMoreSearch | 更多搜索按钮（自动生成弹窗） | 高级搜索 |
+ * | button | 统一按钮，confirm/download/modal 由配置描述 | 导出、删除、新增 |
  * | searchButton | 搜索按钮 | 搜索/清空 |
- * | import | 导入按钮 | Excel导入 |
- * | download | 下载按钮 | 导出Excel |
+ * | import | 导入按钮 | Excel导入（onClick 接收文件） |
  *
  * 【状态管理】
  * - toolBarItemlist: 工具栏项列表
@@ -55,10 +53,10 @@ const toolBarProps = {
 const toolBarEmits = [
   'enterBatchMode', // 进入批量选择模式
   'exitBatchMode', // 退出批量选择模式
-  'openModal', // 打开弹窗
   'focus', // 表单聚焦
   'blur', // 表单失焦
   'search', // 触发搜索
+  'refreshList', // 原地刷新列表（保持当前页码）
 ];
 
 /**
@@ -137,7 +135,7 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
    * @returns {boolean} 是否为按钮类型
    */
   const isButtonType = (type) => {
-    return ['button', 'searchButton', 'import', 'confirm'].includes(type);
+    return ['button', 'searchButton', 'import'].includes(type);
   };
 
   /**
@@ -311,8 +309,8 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
       }
     }
 
-    // disabled 监听（openModal、button 和 confirm 类型）
-    if (['openModal', 'button', 'confirm'].includes(sourceItem.type)) {
+    // disabled 监听（统一按钮类型）
+    if (sourceItem.type === 'button') {
       if (sourceItem?.disabled?.watch?.keys && sourceItem?.disabled?.watch?.handle) {
         const watchHandle = sourceItem.disabled.watch.handle;
         let watchSetting;
@@ -432,13 +430,10 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
             } else {
               state.buttonLoadingInfo.value[key] = false;
             }
-            // confirm 类型：初始化禁用状态
-            if (targetItem.type === 'confirm') {
+            // 统一按钮：初始化禁用状态
+            if (targetItem.type === 'button') {
               state.buttonDisableInfo.value[key] = false;
             }
-          } else if (['openModal', 'button'].includes(targetItem.type)) {
-            // openModal 和 button 类型：初始化禁用状态
-            state.buttonDisableInfo.value[key] = false;
           }
           setToolBarItemShow(targetItem);
           // 设置监听
@@ -473,11 +468,50 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
    * 创建工具栏
    * @param {Array} sourceToolBarItemList - 工具栏项列表
    */
+  /**
+   * 生成“更多搜索”弹窗配置
+   * 按钮自带弹窗后，原集中式弹窗里自动生成的配置收敛到这里
+   * @param {Object} item - 工具栏项配置
+   * @returns {Object} AdvModal 配置
+   */
+  const createMoreSearchModal = (item) => {
+    const customModal = item.modal || {};
+    return {
+      key: item.key,
+      type: 'drawer',
+      title: '更多搜索',
+      form: item.form,
+      ...customModal,
+      okButton: {
+        text: '搜索',
+        onClick: (bindData, formData) => {
+          emits('search', { toolBarParams: formData });
+          return { close: true, reloadList: false, resetFormData: false };
+        },
+        ...(customModal.okButton || {}),
+      },
+      cancelButton: {
+        text: '重置',
+        onClick: () => {
+          // 重置等价于清空条件后重新搜索
+          emits('search', { toolBarParams: {} });
+          return { close: true, reloadList: false };
+        },
+        ...(customModal.cancelButton || {}),
+      },
+    };
+  };
+
   const createToolBar = (sourceToolBarItemList) => {
     state.toolBarItemlist.value = [];
     for (const sourceItem of sourceToolBarItemList) {
       state.currentProcessItem = Object.assign({}, sourceItem);
       toolBarItemConfigFormat(sourceItem);
+      // 更多搜索：自动挂载弹窗，打开时带入当前搜索条件
+      if (state.currentProcessItem.type === 'openMoreSearch') {
+        state.currentProcessItem.modal = createMoreSearchModal(state.currentProcessItem);
+        state.currentProcessItem.modalPayload = () => ({ ...state.formData.value });
+      }
       state.toolBarItemlist.value.push(state.currentProcessItem);
       state.currentProcessItem = null;
     }
@@ -589,21 +623,6 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
    */
   const toolBarButtonClickEventHandler = (toolBarItem, payload) => {
     switch (toolBarItem.type) {
-      case 'openModal': {
-        // 打开弹窗
-        const modalKey = toolBarItem.key;
-        const data = payload;
-        emits('openModal', { key: modalKey, data });
-        break;
-      }
-      case 'openMoreSearch': {
-        // 打开更多搜索弹窗
-        emits('openModal', {
-          key: toolBarItem.key,
-          data: state.formData,
-        });
-        break;
-      }
       case 'batch': {
         // 批量操作
         const actionType = payload;
@@ -616,13 +635,13 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
           }
           case 'ok': {
             // 确认批量操作
-            toolBarItem?.ok?.fn?.(getAllPageSelectedRowList());
+            toolBarItem?.ok?.onClick?.(getAllPageSelectedRowList());
             clearBatchModeState();
             break;
           }
           case 'cancel': {
             // 取消批量操作
-            toolBarItem?.cancel?.fn?.();
+            toolBarItem?.cancel?.onClick?.();
             clearBatchModeState();
             state.currentBatchInfo.value = null;
             break;
@@ -631,12 +650,12 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
         break;
       }
       case 'button': {
-        // 普通按钮
-        if (toolBarItem?.fn) {
-          if (getVarType(toolBarItem.fn) === 'asyncFunction') {
+        // 统一按钮：confirm / download / modal 已由 AdvButton 处理，这里只执行动作
+        const action = toolBarItem?.onClick;
+        if (typeof action === 'function') {
+          if (getVarType(action) === 'asyncFunction') {
             state.buttonLoadingInfo.value[toolBarItem.key] = true;
-            toolBarItem
-              .fn(payload)
+            action(payload)
               .then((res) => {
                 const { refreshRecordList, message: msg } = res || {};
                 refreshRecordList && emits('search');
@@ -648,7 +667,7 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
                 state.buttonLoadingInfo.value[toolBarItem.key] = false;
               });
           } else {
-            const res = toolBarItem.fn(payload);
+            const res = action(payload);
             const { refreshRecordList, message: msg } = res || {};
             refreshRecordList && emits('search');
             if (msg && typeof message === 'function') {
@@ -692,7 +711,7 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
         const file = payload;
         state.buttonLoadingInfo.value[toolBarItem.key] = true;
         toolBarItem
-          .fn(file)
+          .onClick(file)
           .then(() => {
             emits('search', {
               toolBarParams: getToolBarParams(),
@@ -703,56 +722,6 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
           });
         // 阻止UI库上传组件执行它自己的后续上传步骤
         return false;
-      }
-      case 'download': {
-        // 下载按钮
-        toolBarItem.fn().then(({ url, name }) => {
-          const aEle = document.createElement('a');
-          aEle.href = url;
-          aEle.download = name;
-          aEle.style.display = 'none';
-          document.body.appendChild(aEle);
-          aEle.click();
-          aEle.parentNode.removeChild(aEle);
-        });
-        break;
-      }
-      case 'confirm': {
-        if (!state.buttonLoadingInfo.value[toolBarItem.key]) {
-          const noticeMsg = toolBarItem?.confirm?.text
-            ? toolBarItem?.confirm?.text
-            : `是否确认${toolBarItem.text}？`;
-          ElMessageBox.confirm(noticeMsg, '提示', {
-            confirmButtonText: toolBarItem.confirm?.text || '确认',
-            cancelButtonText: toolBarItem?.cancel?.text || '取消',
-            type: 'warning',
-          })
-            .then(async () => {
-              if (toolBarItem?.confirm?.fn) {
-                if (getVarType(toolBarItem.confirm.fn) === 'asyncFunction') {
-                  state.buttonLoadingInfo.value[toolBarItem.key] = true;
-                  const res = await toolBarItem.confirm.fn();
-                  res?.refreshRecordList && emits('search');
-                  if (res?.message && typeof message === 'function') {
-                    message(res.message);
-                  }
-                  state.buttonLoadingInfo.value[toolBarItem.key] = false;
-                } else {
-                  const res = toolBarItem.confirm.fn();
-                  res?.refreshRecordList && emits('search');
-                  if (res?.message && typeof message === 'function') {
-                    message(res.message);
-                  }
-                }
-              }
-            })
-            .catch((err) => {
-              if (err === 'cancel') {
-                toolBarItem?.cancel?.fn?.();
-              }
-            });
-        }
-        break;
       }
       default:
         break;

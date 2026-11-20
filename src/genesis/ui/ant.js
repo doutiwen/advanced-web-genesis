@@ -31,17 +31,46 @@ import { message, Modal } from 'ant-design-vue';
  *
  * @param {String} content - 提示正文
  * @param {String} title - 弹窗标题
- * @param {Object} options - 按钮文案与图标类型，如 { confirmButtonText, cancelButtonText, type }
+ * @param {Object} options - 按钮文案与图标类型，如 { confirmButtonText, cancelButtonText, type }；
+ *   额外支持 Element Plus 选项名，由本函数映射为 antd 对应项（见下方映射）
  * @returns {Promise} 确认 resolve，取消 reject('cancel')
  */
 const confirm = (content, title, options = {}) => {
   return new Promise((resolve, reject) => {
+    // 从 attrs 中拆出需要做名称映射的 Element Plus 选项，其余原样透传
+    const {
+      confirmButtonText,
+      okText,
+      cancelButtonText,
+      type,
+      closeOnClickModal,
+      closeOnPressEscape,
+      showClose,
+      customClass,
+      confirmButtonClass,
+      okButtonProps: userOkButtonProps,
+      ...restOptions
+    } = options;
+    // 确认按钮 class 合入 okButtonProps
+    const okButtonProps = confirmButtonClass
+      ? { ...(userOkButtonProps || {}), class: confirmButtonClass }
+      : userOkButtonProps;
+
     Modal.confirm({
+      // 同名 + 未识别选项原样透传（如 centered / width）；
+      // distinguishCancelAndClose 在 antd 下无法区分取消与关闭，传入不生效
+      ...restOptions,
       title: title || '提示',
       content: content || '是否确认执行此操作？',
-      okText: options.confirmButtonText || options.okText || '确认',
-      cancelText: options.cancelButtonText || '取消',
-      type: options.type || 'warning',
+      okText: confirmButtonText || okText || '确认',
+      cancelText: cancelButtonText || '取消',
+      type: type || 'warning',
+      // Element Plus 选项名 → antd 选项名
+      ...(closeOnClickModal !== undefined ? { maskClosable: closeOnClickModal } : {}),
+      ...(closeOnPressEscape !== undefined ? { keyboard: closeOnPressEscape } : {}),
+      ...(showClose !== undefined ? { closable: showClose } : {}),
+      ...(customClass ? { class: customClass } : {}),
+      ...(okButtonProps ? { okButtonProps } : {}),
       onOk: () => resolve(),
       onCancel: () => reject('cancel'),
     });

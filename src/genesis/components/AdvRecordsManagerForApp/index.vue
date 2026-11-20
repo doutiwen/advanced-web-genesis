@@ -17,7 +17,7 @@
 </template>
 
 <script setup>
-  import AdvRecordsManager from '@/components/AdvRecordsManager';
+  import AdvRecordsManager from '@common/components/AdvRecordsManager';
   import { computed, shallowRef, useCssModule, useAttrs, markRaw } from 'vue';
 
   /**
@@ -57,24 +57,6 @@
      */
     search: (...args) => {
       return originalAdvRecordsManagerRef.value.search(...args);
-    },
-    /**
-     * 打开弹窗
-     */
-    openModal: (...args) => {
-      return originalAdvRecordsManagerRef.value.openModal(...args);
-    },
-    /**
-     * 关闭弹窗
-     */
-    closeModal: (...args) => {
-      return originalAdvRecordsManagerRef.value.closeModal(...args);
-    },
-    /**
-     * 获取弹窗数据
-     */
-    getModalData: (key) => {
-      return originalAdvRecordsManagerRef.value.getModalData(key);
     },
     /**
      * 刷新列表（保持当前页码不变）

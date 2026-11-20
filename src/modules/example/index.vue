@@ -2,7 +2,6 @@
   <AdvRecordsManager
     :toolBarConfig="toolBarConfig"
     :recordListConfig="recordListConfig"
-    :modalConfig="modalList"
     ref="TRMref"
   >
     <template #recordListColumn-content="{ rowData, colData }">
@@ -16,7 +15,6 @@
         <el-text type="warning">{{ colData }}</el-text>
       </template>
     </template>
-    <!-- <template #modal-modalKey="{data, closeModal, setFormRef}">内容</template> -->
   </AdvRecordsManager>
 </template>
 <script setup>
@@ -26,7 +24,7 @@
     list: [
       {
         key: 'add',
-        type: 'openModal',
+        type: 'button',
         text: '新增',
         attrs: {
           type: 'primary',
@@ -37,6 +35,90 @@
         },
         events: {},
         inRight: true,
+        // 按钮自带弹窗
+        modal: {
+          key: 'add',
+          type: 'dialog',
+          title: '新增',
+          fullscreen: true,
+          form: {
+            list: [
+              {
+                key: 'department',
+                type: 'select',
+                label: '检查部门',
+                async options() {
+                  const res = await openApi({ api: 'example/getDepartment' });
+                  return res.data;
+                },
+                validate: [{ type: 'required' }],
+                attrs: { showSearch: true },
+              },
+              {
+                key: 'checkLocation',
+                type: 'input',
+                label: '检查地点',
+                validate: [{ type: 'required' }],
+              },
+              {
+                key: 'hazardContent',
+                type: 'textarea',
+                label: '隐患内容',
+                attrs: { showCount: true },
+                validate: [{ type: 'required' }],
+              },
+              {
+                key: 'hazardLevel',
+                type: 'select',
+                label: '隐患级别',
+                async options() {
+                  const res = await openApi({ api: 'example/getLevel' });
+                  return res.data;
+                },
+                validate: [{ type: 'required' }],
+              },
+              {
+                key: 'remark',
+                type: 'textarea',
+                label: '备注',
+                attrs: { showCount: true },
+                set(sourceValue) {
+                  return `set-${sourceValue}`;
+                },
+                get(sourceValue) {
+                  return `get-${sourceValue}`;
+                },
+              },
+            ],
+            attrs: { style: 'width:600px' },
+            UIformItemAttrs: { labelCol: { span: 6, offset: 1 } },
+          },
+          async getBindData() {
+            // 模拟异步取数
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            return {
+              department: '1',
+              checkLocation: '地点34',
+              hazardContent: '隐患内容玻璃',
+              hazardLevel: '2',
+              remark: '备注一下',
+            };
+          },
+          okButton: {
+            text: '保存新增',
+            async onClick(modalBindData, formData) {
+              console.log('新增保存', modalBindData, formData);
+              return { close: true, reloadList: false };
+            },
+          },
+          cancelButton: {
+            text: '取消新增',
+            onClick(modalBindData) {
+              console.log('取消新增', modalBindData);
+              return { close: true };
+            },
+          },
+        },
       },
       {
         key: 'batchExport',
@@ -47,7 +129,7 @@
         },
         ok: {
           text: '导出',
-          fn(selectedRows) {
+          onClick(selectedRows) {
             console.log('批量导出数据', selectedRows);
           },
         },
@@ -65,7 +147,7 @@
         },
         ok: {
           text: '删除',
-          fn(selectedRows) {
+          onClick(selectedRows) {
             console.log('批量删除数据', selectedRows);
           },
         },
@@ -204,30 +286,81 @@
         list: [
           {
             key: 'dispatchWorkers',
-            type: 'openModal',
+            type: 'button',
             text: '派工',
             show: "flowStatus==='待派工'",
+            // 行数据通过 modalPayload 自动传入，getBindData 接收该数据
+            modal: {
+              key: 'dispatchWorkers',
+              type: 'dialog',
+              title: '派工',
+              form: {
+                list: [
+                  {
+                    key: 'rectificationDeadline',
+                    type: 'date',
+                    label: '整改期限',
+                    validate: [{ type: 'required' }],
+                  },
+                  {
+                    key: 'remark',
+                    type: 'textarea',
+                    label: '备注',
+                    attrs: { showCount: true },
+                    set(sourceValue) {
+                      return `set-${sourceValue}`;
+                    },
+                    get(setterValue) {
+                      return `get-${setterValue.replace(/^set-([\w\u4e00-\u9fa5]+)$/g, '$1')}`;
+                    },
+                  },
+                ],
+                attrs: { style: 'width:600px' },
+                UIformItemAttrs: { labelCol: { span: 6, offset: 1 } },
+                events: {
+                  validateSuccess(formData) {
+                    console.log('表单数据', formData);
+                  },
+                },
+              },
+              async getBindData(rowData) {
+                console.log('派工载入行数据', rowData);
+                return { rectificationDeadline: '2025-02-02', remark: '备注一下' };
+              },
+              okButton: {
+                text: '确定派工',
+                async onClick(rowData, formData) {
+                  console.log('派工保存', rowData, formData);
+                  return { close: true, reloadList: false };
+                },
+              },
+            },
           },
           {
             key: 'rectify',
-            type: 'openModal',
+            type: 'button',
             text: '整改',
             show: "flowStatus==='待整改'",
+            modal: {
+              key: 'rectify',
+              type: 'dialog',
+              title: '整改',
+            },
           },
           {
             key: 'del',
-            type: 'confirm',
+            type: 'button',
             text: '删除',
             confirm: {
-              async fn(rowData) {
-                console.log('删除', rowData);
-                const refreshTable = false;
-                return refreshTable;
+              notice: '是否确认删除该条数据？',
+              okText: '确认',
+              cancelText: '取消1',
+              onCancel: (rowData) => {
+                console.log('取消删除', rowData);
               },
             },
-            cancel: {
-              text: '取消1',
-              fn(rowData) {},
+            async onClick(rowData) {
+              console.log('删除', rowData);
             },
             buttonAttrs: {
               type: 'danger',
@@ -238,7 +371,7 @@
             key: 'formItemOperater',
             type: 'formItemOperater',
             text: '编辑行内状态',
-            async fn(rowData) {
+            async onClick(rowData) {
               console.log('表格行内表单保存', rowData);
               return false;
             },

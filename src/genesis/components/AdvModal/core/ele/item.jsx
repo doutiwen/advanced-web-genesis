@@ -10,38 +10,45 @@
  *
  * 【内容渲染】
  * 1. 表单模式：通过 config.form 配置渲染 AdvForm
- * 2. 自定义模式：通过插槽 modal-{key}-content 自定义内容
+ * 2. 自定义模式：通过插槽 content 自定义内容
  *
  * 【表单数据流】
- * AdvForm 采用单向数据流，bindFormData 仅作为组件内部 watch 等逻辑的实时表单值镜像
- * （如 okButton.disabled.watch 动态禁用确认按钮），不作为 getData / okButton.fn 的数据载体：
- * - 数据进入：getData 拉取后由 useAdvModalItem 直接调用 Form 实例的 setFormData() 注入（触发 set 变换）
- * - 数据镜像：监听 Form 的 input 事件，累积用户编辑值到 bindFormData
+ * Form 与 state.bindFormData 保留双向绑定，但 bindFormData 仅作为组件内部 watch 等逻辑
+ * 的实时表单值镜像（如 okButton.disabled.watch 动态禁用确认按钮），不再作为 getBindData /
+ * okButton.onClick 的数据载体：
+ * - 数据进入：getBindData 拉取后由 useAdvModalItem 直接调用 Form 实例的 setFormData() 注入，
+ *   按表单配置回填数据，不写入 bindFormData
  * - 数据取出：点击确定时先执行 Form 实例的 submit() 校验并取出（经 get 变换后的）表单数据，
- *   再作为第二参数交给 okButton.fn，同样不经 bindFormData
+ *   再作为第二参数交给 okButton.onClick，同样不经 bindFormData
  *
  * 【插槽说明】
  * | 插槽名 | 说明 |
  * |--------|------|
- * | modal-{key}-content | 弹窗内容自定义 |
- * | modal-{key}-footer | 弹窗底部区域自定义 |
+ * | content | 弹窗内容自定义 |
+ * | footer | 弹窗底部区域自定义 |
  */
 
 import { defineComponent } from 'vue';
-import Form from '@/components/AdvForm';
+import Form from '@common/components/AdvForm';
 import { ElDialog, ElDrawer, ElMessage, ElMessageBox } from 'element-plus';
 import { useAdvModalItem, advModalItemProps } from '../common/index.js';
 
 export default defineComponent({
   name: 'adv-modal-item',
   props: advModalItemProps,
-  emits: ['modalOpen', 'modalClose', 'refreshRecordList'],
+  emits: ['modalOpen', 'modalClose', 'reloadList'],
   setup(props, { emit, slots, expose }) {
     /**
      * 使用弹窗 Hook
      */
-    const { state, setFormRef, modalButtonEventHandler, handleCancel, defineExposeConfig } =
-      useAdvModalItem(props, emit, ElMessage.success, ElMessageBox);
+    const {
+      state,
+      setFormRef,
+      modalButtonEventHandler,
+      handleCancel,
+      defineExposeConfig,
+      formConfig,
+    } = useAdvModalItem(props, emit, ElMessage.success, ElMessageBox);
 
     /**
      * 暴露方法给父组件
@@ -49,33 +56,14 @@ export default defineComponent({
     expose(defineExposeConfig);
 
     /**
-     * 表单实时数据镜像：AdvForm 已废弃 v-model，改由 input 事件累积用户编辑值到 bindFormData，
-     * 供 okButton.disabled.watch 等内部逻辑使用，不作为数据载体
-     * @param {Object} payload - { key, value, data }
-     */
-    const handleFormInput = (payload) => {
-      if (payload?.key == null) return;
-      state.bindFormData.value = {
-        ...state.bindFormData.value,
-        [payload.key]: payload.value,
-      };
-      // 透传外部通过 config.form.events 注册的 input 监听
-      const externalInputHandler =
-        props.config.form.events?.onInput ?? props.config.form.events?.input;
-      if (typeof externalInputHandler === 'function') {
-        externalInputHandler(payload);
-      }
-    };
-
-    /**
      * 渲染弹窗底部按钮区域
      * @returns {JSX.Element} 底部按钮元素
      */
     const renderFooter = () => {
-      const footerSlot = slots[`modal-${props.config.key}-footer`];
+      const footerSlot = slots.footer;
       if (footerSlot) {
         return footerSlot({
-          modalData: state.data.value,
+          modalBindData: state.bindData.value,
           // 已解析的确认按钮文案：外部 footer 插槽直接取用，不要在插槽里调用户方法
           // （插槽渲染位于 ElOverlay 的渲染副作用内，渲染期抛错会连带炸掉整个弹窗渲染）
           okButtonText: state.okButtonText.value,
@@ -90,7 +78,7 @@ export default defineComponent({
       } else {
         /**
          * 确认按钮内容
-         * okButton.text 支持方法形式 (modalData) => String，方法在数据落库后由
+         * okButton.text 支持方法形式 (modalBindData) => String，方法在数据落库后由
          * refreshOkButtonText 解析并缓存到 state.okButtonText（不在此处执行用户方法）
          */
         const okButtonContent = (
@@ -144,7 +132,8 @@ export default defineComponent({
      * @returns {JSX.Element} 主体内容元素
      */
     const renderDefault = () => {
-      const contentSlot = slots[`modal-${props.config.key}-content`];
+      const contentSlot = slots.content;
+
       return (
         <div
           style="height: 100%"
@@ -153,7 +142,7 @@ export default defineComponent({
           {contentSlot ? (
             // 自定义内容模式
             contentSlot({
-              modalData: state.data.value,
+              modalBindData: state.bindData.value,
               closeModal: () => modalButtonEventHandler('cancel'),
               okLoading: state.okButtonLoading.value,
               okDisabled: state.okButtonDisable.value,
@@ -164,15 +153,21 @@ export default defineComponent({
             })
           ) : props.config?.form ? (
             // 表单模式
-            // AdvForm 采用单向数据流：载入走 setFormData，取出走 submit，
-            // bindFormData 仅作为组件内部 watch 使用的实时镜像（如 okButton.disabled.watch 动态禁用）
+            // Form 保留 modelValue / onUpdate:modelValue 双向绑定，bindFormData 仅作为组件内部
+            // watch 等使用的实时镜像（如 okButton.disabled.watch 动态禁用），不作为 getBindData /
+            // okButton.onClick 的数据载体：
+            // - 载入：getBindData 拉取后由 useAdvModalItem 调用 formRef.setFormData() 注入
+            // - 取出：okButton 事件中调用 formRef.submit() 获取后再执行 okButton.onClick
 
             <el-scrollbar>
               <Form
                 config={formConfig}
+                modelValue={state.bindFormData.value}
+                onUpdate:modelValue={(val) => {
+                  state.bindFormData.value = val;
+                }}
                 ref={(ref) => setFormRef(ref)}
                 {...(props.config.form.events || {})}
-                onInput={handleFormInput}
               >
                 {{ ...formSlots }}
               </Form>
@@ -214,7 +209,7 @@ export default defineComponent({
               fullscreen: !!props.config.fullscreen,
             }),
         onCancel: () => modalButtonEventHandler('cancel'),
-        // 点击右上角关闭图标（以及 ESC / 遮罩关闭）时，先执行 cancelButton.fn，再决定是否关闭
+        // 点击右上角关闭图标（以及 ESC / 遮罩关闭）时，先执行 cancelButton.onClick，再决定是否关闭
         beforeClose: (done) => {
           if (handleCancel()) {
             done();

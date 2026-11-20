@@ -71,7 +71,7 @@
           ></slot>
 
           <!-- 链接列 -->
-          <el-button
+          <AdvButton
             v-if="column.type === 'link'"
             @click="columnEventHandler(column, scope.row)"
             size="small"
@@ -79,12 +79,15 @@
             type="primary"
           >
             {{ scope.row[column.key] }}
-          </el-button>
+          </AdvButton>
 
-          <!-- 弹窗列（openModal 类型） -->
-          <el-button
+          <!-- 弹窗列（openModal 类型）：按钮自带 modal，行数据作为打开入参 -->
+          <AdvButton
             v-if="column.type === 'openModal'"
+            :modal="column.modal"
+            :modalPayload="scope.row[ctxSymbol.for('originalData')] ?? scope.row"
             @click="columnEventHandler(column, scope.row)"
+            @reloadList="getListData"
             size="small"
             link
             type="primary"
@@ -95,7 +98,7 @@
                 ? column.text(scope.row)
                 : (column.text ?? scope.row[column.key])
             }}
-          </el-button>
+          </AdvButton>
 
           <!-- 可编辑表单项列 -->
           <template v-if="column.type === 'formItem'">
@@ -173,21 +176,17 @@
               :key="operaterItem.key"
             >
               <template v-if="scope.row[ctxSymbol.for(`operater-${operaterItem.key}-show`)]">
-                <!-- 普通按钮操作 -->
-                <el-button
-                  v-if="!['confirm', 'formItemOperater'].includes(operaterItem.type)"
-                  size="small"
-                  link
-                  type="primary"
-                  v-bind="operaterItem.attrs"
-                  @click="() => operaterItemEventHandler(operaterItem, scope.row)"
+                <!-- 统一按钮：confirm / download / modal 由 AdvButton 处理 -->
+                <AdvButton
+                  v-if="operaterItem.type !== 'formItemOperater'"
+                  v-bind="resolveOperaterButtonProps(operaterItem, scope.row)"
                 >
                   {{ operaterItem.text }}
-                </el-button>
+                </AdvButton>
 
                 <!-- 表单操作器 -->
-                <template v-else-if="operaterItem.type === 'formItemOperater'">
-                  <el-button
+                <template v-else>
+                  <AdvButton
                     v-if="scope.row[ctxSymbol.for('formItemDisable')]"
                     link
                     size="small"
@@ -195,10 +194,10 @@
                     @click="() => operaterItemEventHandler(operaterItem, scope.row, 'entry')"
                   >
                     {{ operaterItem.text }}
-                  </el-button>
+                  </AdvButton>
                   <template v-else>
                     <el-button-group>
-                      <el-button
+                      <AdvButton
                         size="small"
                         link
                         type="primary"
@@ -206,49 +205,17 @@
                         :loading="scope.row[ctxSymbol.for('operater-formItemOperater-loading')]"
                       >
                         保存
-                      </el-button>
-                      <el-button
+                      </AdvButton>
+                      <AdvButton
                         size="small"
                         link
                         @click="() => operaterItemEventHandler(operaterItem, scope.row, 'exit')"
                       >
                         取消
-                      </el-button>
+                      </AdvButton>
                     </el-button-group>
                   </template>
                 </template>
-
-                <!-- 确认操作 - 支持两种方式 -->
-                <el-button
-                  v-else-if="operaterItem.type === 'confirm' && operaterItem.isMsgBox"
-                  size="small"
-                  link
-                  type="primary"
-                  v-bind="operaterItem.buttonAttrs"
-                  @click="() => operaterItemEventHandler(operaterItem, scope.row)"
-                >
-                  {{ operaterItem.text }}
-                </el-button>
-                <el-popconfirm
-                  v-else-if="operaterItem.type === 'confirm'"
-                  :title="`是否确认${operaterItem.text}？`"
-                  :confirm-button-text="operaterItem?.confirm?.text || '确认'"
-                  :cancel-button-text="operaterItem?.cancel?.text || '取消'"
-                  v-bind="operaterItem.attrs"
-                  @confirm="() => operaterItemEventHandler(operaterItem, scope.row, 'confirm')"
-                  @cancel="() => operaterItemEventHandler(operaterItem, scope.row, 'cancel')"
-                >
-                  <template #reference>
-                    <el-button
-                      size="small"
-                      link
-                      type="primary"
-                      v-bind="operaterItem.buttonAttrs"
-                    >
-                      {{ operaterItem.text }}
-                    </el-button>
-                  </template>
-                </el-popconfirm>
               </template>
             </template>
           </div>
@@ -329,6 +296,8 @@
   } from 'vue';
   import { ElMessage } from 'element-plus';
   import { useRecordList, recordListProps, recordListEmits } from '../common/recordList.js';
+  // 按钮统一由 AdvButton 渲染
+  import AdvButton from '@common/components/AdvButton';
 
   /**
    * 组件属性定义
@@ -400,6 +369,7 @@
     formData,
     formItemInputEventHandler,
     operaterItemEventHandler,
+    resolveOperaterButtonProps,
     columnEventHandler,
     setFilterParams,
     clearFilterParams,

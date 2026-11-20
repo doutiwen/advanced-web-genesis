@@ -16,7 +16,7 @@
  * | index | 序号列 | 自动生成序号 |
  * | custom | 自定义渲染列 | 状态标签、操作按钮 |
  * | link | 链接列 | 点击跳转 |
- * | openModal | 弹窗列 | 点击打开弹窗 |
+ * | openModal | 弹窗列 | 按钮自带 modal，点击打开 |
  * | formItem | 可编辑表单项列 | 开关、输入框 |
  * | operater | 操作列 | 查看、编辑、删除按钮 |
  * | fileList | 文件列表列 | 附件列表 |
@@ -159,7 +159,7 @@ const recordListEmits = [
   'getPageBatchList', // 获取批量列表（切换分页时）
   'selectRows', // 选中行事件
   'clearBatch', // 清除批量选择
-  'openModal', // 打开弹窗
+
   'getToolBarParams', // 获取工具栏参数
   'listDataGet', // 列表数据获取完成
   'update:pageNum', // 更新页码（双向绑定）
@@ -693,220 +693,25 @@ const useRecordList = (
   const operaterItemEventHandler = (operaterItem, rowData, payload) => {
     const originalRowData = getOriginalRowData(rowData);
     switch (operaterItem.type) {
-      case 'openModal': {
-        // 打开弹窗（传递原样数据，由弹窗内表单解密展示）
-        emits('openModal', {
-          key: operaterItem.key,
-          data: originalRowData,
-        });
-        break;
-      }
       case 'button': {
-        // 普通按钮
-        if (operaterItem?.fn) {
-          if (getVarType(operaterItem.fn) === 'asyncFunction') {
-            operaterItem.fn(originalRowData).then(({ refreshRecordList, message: msg } = {}) => {
+        // 统一按钮：confirm / download / modal 已由 AdvButton 处理，这里只执行动作
+        const action = operaterItem?.onClick;
+        if (typeof action === 'function') {
+          if (getVarType(action) === 'asyncFunction') {
+            action(originalRowData).then(({ refreshRecordList, message: msg } = {}) => {
               if (msg && typeof message === 'function') {
                 message(msg);
               }
               refreshRecordList && getListData();
             });
-          } else if (getVarType(operaterItem.fn) === 'function') {
-            const res = operaterItem.fn(originalRowData);
+          } else if (getVarType(action) === 'function') {
+            const res = action(originalRowData);
             if (res?.message && typeof message === 'function') {
               message(res.message);
             }
             res?.refreshRecordList && getListData();
           }
         }
-        break;
-      }
-      case 'confirm': {
-        // 确认操作 - 支持两种方式：el-popconfirm 和 ElMessageBox
-        if (operaterItem.isMsgBox) {
-          // 使用 ElMessageBox 方式
-          if (operaterItem?.confirm?.getData) {
-            if (getVarType(operaterItem.confirm.getData) === 'asyncFunction') {
-              (async function () {
-                const confirmData = await operaterItem.confirm.getData(originalRowData);
-                // 使用 ElMessageBox 方式
-                let noticeMsg;
-                if (operaterItem?.confirm?.title) {
-                  if (getVarType(operaterItem.confirm.title) === 'function') {
-                    noticeMsg = operaterItem.confirm.title(originalRowData, confirmData);
-                  } else if (getVarType(operaterItem.confirm.title) === 'string') {
-                    noticeMsg = operaterItem.confirm.title;
-                  } else {
-                    noticeMsg = `是否确认${operaterItem.text}？`;
-                  }
-                } else {
-                  noticeMsg = `是否确认${operaterItem.text}？`;
-                }
-                ElMessageBox.confirm(noticeMsg, '提示', {
-                  confirmButtonText: operaterItem.confirm?.text || '确认',
-                  cancelButtonText: operaterItem?.cancel?.text || '取消',
-                  type: 'warning',
-                })
-                  .then(async () => {
-                    if (operaterItem?.confirm?.fn) {
-                      if (getVarType(operaterItem.confirm.fn) === 'asyncFunction') {
-                        const { refreshRecordList, message: msg } = await operaterItem.confirm.fn(
-                          originalRowData,
-                          confirmData
-                        );
-                        if (msg && typeof message === 'function') {
-                          message(msg);
-                        }
-                        refreshRecordList && getListData();
-                      } else {
-                        const { refreshRecordList, message: msg } = operaterItem.confirm.fn(
-                          rowData,
-                          confirmData
-                        );
-                        if (msg && typeof message === 'function') {
-                          message(msg);
-                        }
-                        refreshRecordList && getListData();
-                      }
-                    }
-                  })
-                  .catch((err) => {
-                    if (err === 'cancel') {
-                      operaterItem?.cancel?.fn?.(originalRowData);
-                    }
-                  });
-              })();
-            } else if (getVarType(operaterItem.confirm.getData) === 'function') {
-              const confirmData = operaterItem.confirm.getData(originalRowData);
-              // 使用 ElMessageBox 方式
-              let noticeMsg;
-              if (operaterItem?.confirm?.title) {
-                if (getVarType(operaterItem.confirm.title) === 'function') {
-                  noticeMsg = operaterItem.confirm.title(originalRowData, confirmData);
-                } else if (getVarType(operaterItem.confirm.title) === 'string') {
-                  noticeMsg = operaterItem.confirm.title;
-                } else {
-                  noticeMsg = `是否确认${operaterItem.text}？`;
-                }
-              } else {
-                noticeMsg = `是否确认${operaterItem.text}？`;
-              }
-              ElMessageBox.confirm(noticeMsg, '提示', {
-                confirmButtonText: operaterItem.confirm?.text || '确认',
-                cancelButtonText: operaterItem?.cancel?.text || '取消',
-                type: 'warning',
-              })
-                .then(async () => {
-                  if (operaterItem?.confirm?.fn) {
-                    if (getVarType(operaterItem.confirm.fn) === 'asyncFunction') {
-                      const { refreshRecordList, message: msg } = await operaterItem.confirm.fn(
-                        originalRowData,
-                        confirmData
-                      );
-                      if (msg && typeof message === 'function') {
-                        message(msg);
-                      }
-                      refreshRecordList && getListData();
-                    } else {
-                      const { refreshRecordList, message: msg } = operaterItem.confirm.fn(
-                        rowData,
-                        confirmData
-                      );
-                      if (msg && typeof message === 'function') {
-                        message(msg);
-                      }
-                      refreshRecordList && getListData();
-                    }
-                  }
-                })
-                .catch((err) => {
-                  if (err === 'cancel') {
-                    operaterItem?.cancel?.fn?.(originalRowData);
-                  }
-                });
-            }
-          } else {
-            let noticeMsg;
-            if (operaterItem?.confirm?.title) {
-              if (getVarType(operaterItem.confirm.title) === 'function') {
-                noticeMsg = operaterItem.confirm.title(originalRowData);
-              } else if (getVarType(operaterItem.confirm.title) === 'string') {
-                noticeMsg = operaterItem.confirm.title;
-              } else {
-                noticeMsg = `是否确认${operaterItem.text}？`;
-              }
-            } else {
-              noticeMsg = `是否确认${operaterItem.text}？`;
-            }
-
-            ElMessageBox.confirm(noticeMsg, '提示', {
-              confirmButtonText: operaterItem.confirm?.text || '确认',
-              cancelButtonText: operaterItem?.cancel?.text || '取消',
-              type: 'warning',
-            })
-              .then(async () => {
-                if (operaterItem?.confirm?.fn) {
-                  if (getVarType(operaterItem.confirm.fn) === 'asyncFunction') {
-                    const { refreshRecordList, message: msg } =
-                      await operaterItem.confirm.fn(originalRowData);
-                    if (msg && typeof message === 'function') {
-                      message(msg);
-                    }
-                    refreshRecordList && getListData();
-                  } else {
-                    const { refreshRecordList, message: msg } = operaterItem.confirm.fn(rowData);
-                    if (msg && typeof message === 'function') {
-                      message(msg);
-                    }
-                    refreshRecordList && getListData();
-                  }
-                }
-              })
-              .catch((err) => {
-                if (err === 'cancel') {
-                  operaterItem?.cancel?.fn?.(originalRowData);
-                }
-              });
-          }
-        } else {
-          // 使用 el-popconfirm 方式（通过 payload 区分 confirm/cancel）
-          switch (payload) {
-            case 'confirm': {
-              if (operaterItem?.confirm.fn) {
-                if (getVarType(operaterItem.confirm.fn) === 'asyncFunction') {
-                  operaterItem.confirm
-                    .fn(originalRowData)
-                    .then(({ refreshRecordList, message: msg }) => {
-                      if (msg && typeof message === 'function') {
-                        message(msg);
-                      }
-                      refreshRecordList && getListData();
-                    });
-                } else {
-                  const { refreshRecordList, message: msg } = operaterItem.confirm.fn(rowData);
-                  if (msg && typeof message === 'function') {
-                    message(msg);
-                  }
-                  refreshRecordList && getListData();
-                }
-              }
-              break;
-            }
-            case 'cancel': {
-              if (operaterItem?.cancel?.fn) {
-                operaterItem.cancel.fn(originalRowData);
-              }
-              break;
-            }
-          }
-        }
-        break;
-      }
-      case 'download': {
-        // 下载操作
-        operaterItem.fn(originalRowData).then(({ url, name }) => {
-          download({ url, name });
-        });
         break;
       }
       case 'formItemOperater': {
@@ -939,7 +744,7 @@ const useRecordList = (
             [Symbol.for('operater-formItemOperater-loading')]: true,
           });
           operaterItem
-            .fn(originalRowData)
+            .onClick(originalRowData)
             .then((resetList) => {
               const newRowData = {};
               for (const formItemKey of Object.keys(
@@ -974,41 +779,66 @@ const useRecordList = (
   };
 
   /**
+   * 解析操作列按钮的 AdvButton 属性
+   * 行相关的文案、取消回调与弹窗入参在这里绑定
+   * @param {Object} operaterItem - 操作项配置
+   * @param {Object} rowData - 格式化后的行数据
+   * @returns {Object} AdvButton 属性
+   */
+  const resolveOperaterButtonProps = (operaterItem, rowData) => {
+    const originalRowData = getOriginalRowData(rowData);
+    const { confirm, download, modal, modalPayload, attrs, buttonAttrs } = operaterItem;
+
+    const buttonProps = {
+      size: 'small',
+      link: true,
+      type: 'primary',
+      ...(buttonAttrs || {}),
+      ...(attrs || {}),
+      onClick: () => operaterItemEventHandler(operaterItem, rowData),
+      // 弹窗内操作完成后刷新当前页数据
+      onReloadList: () => getListData(),
+    };
+
+    // 确认文案与取消回调绑定当前行数据（未配置的字段保持缺省，交给 AdvButton 默认值）
+    if (confirm) {
+      const mergedConfirm = { ...confirm };
+      if (typeof confirm.notice === 'function') {
+        mergedConfirm.notice = (event) => confirm.notice(originalRowData, event);
+      }
+      if (typeof confirm.onCancel === 'function') {
+        mergedConfirm.onCancel = (event) => confirm.onCancel(originalRowData, event);
+      }
+      buttonProps.confirm = mergedConfirm;
+    }
+
+    // 下载：函数形态时把行数据交给调用方
+    if (download) {
+      buttonProps.download =
+        typeof download === 'function' ? () => download(originalRowData) : download;
+    }
+
+    // 按钮自带弹窗：行数据作为打开入参
+    if (modal) {
+      buttonProps.modal = modal;
+      buttonProps.modalPayload =
+        typeof modalPayload === 'function'
+          ? () => modalPayload(originalRowData)
+          : (modalPayload ?? originalRowData);
+    }
+
+    return buttonProps;
+  };
+
+  /**
    * 列事件处理器
+   * 链接列 / 弹窗列的自定义动作；列表管理器不再集中打开弹窗
    * @param {Object} columnConfig - 列配置
    * @param {Object} rowData - 行数据
    */
   const columnEventHandler = (columnConfig, rowData) => {
-    switch (columnConfig.type) {
-      case 'viewDetail': {
-        // 查看详情
-        if (!columnConfig.openType || columnConfig.openType === 'modal') {
-          emits('openModal', {
-            key: columnConfig.modalKey,
-            data: getOriginalRowData(rowData),
-          });
-        } else if (columnConfig.openType === 'window') {
-          columnConfig.fn(rowData).then(({ url, name, param }) => {
-            window.open(url, name, param);
-          });
-        }
-        break;
-      }
-      case 'download': {
-        // 下载文件
-        columnConfig.fn(rowData).then(({ url, name }) => {
-          download({ url, name });
-        });
-        break;
-      }
-      case 'openModal': {
-        // 打开弹窗（仿照 operaterItem 中的 openModal 类型，传递原样数据）
-        emits('openModal', {
-          key: columnConfig.key,
-          data: getOriginalRowData(rowData),
-        });
-        break;
-      }
+    if (typeof columnConfig.onClick === 'function') {
+      columnConfig.onClick(getOriginalRowData(rowData));
     }
   };
 
@@ -1082,6 +912,7 @@ const useRecordList = (
     formData: state.formData,
     formItemInputEventHandler,
     operaterItemEventHandler,
+    resolveOperaterButtonProps,
     columnEventHandler,
     setFilterParams,
     clearFilterParams,

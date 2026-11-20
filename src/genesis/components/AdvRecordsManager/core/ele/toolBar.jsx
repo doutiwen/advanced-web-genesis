@@ -26,13 +26,11 @@
  * | checkbox | 多选框 | el-checkbox-group |
  * | date | 日期选择 | el-date-picker |
  * | time | 时间选择 | el-time-picker |
- * | batch | 批量操作按钮 | el-button / el-button-group |
- * | openModal | 打开弹窗按钮 | el-button |
- * | openMoreSearch | 更多搜索按钮 | el-button |
- * | button | 普通按钮 | el-button |
- * | searchButton | 搜索按钮 | el-button-group |
- * | import | 导入按钮 | el-upload + el-button |
- * | download | 下载按钮 | el-button |
+ * | batch | 批量操作按钮 | AdvButton / el-button-group |
+ * | openMoreSearch | 更多搜索按钮（自动生成弹窗） | AdvButton + AdvModal |
+ * | button | 统一按钮（confirm/download/modal 由配置描述） | AdvButton |
+ * | searchButton | 搜索按钮 | AdvButton / el-button-group |
+ * | import | 导入按钮 | el-upload + AdvButton |
  *
  * 【核心特性】
  * 1. 左右布局：工具栏项分为左侧和右侧两部分
@@ -45,6 +43,8 @@ import { defineComponent, withModifiers } from 'vue';
 import { useToolBar, toolBarProps, toolBarEmits } from '../common/toolBar.js';
 import classes from '../common/toolBar.module.scss';
 import { ElMessage } from 'element-plus';
+// 按钮统一由 AdvButton 渲染：confirm/download/modal 等行为由配置直接描述
+import AdvButton from '@common/components/AdvButton';
 
 export default defineComponent({
   name: 'tool-bar',
@@ -241,71 +241,47 @@ export default defineComponent({
           return (
             <>
               {!currentBatchInfo.value && (
-                <el-button
+                <AdvButton
                   onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig, 'entry')}
                   {...attrs}
                 >
                   {slots[`toolBar-item-${key}`]?.() ?? text}
-                </el-button>
+                </AdvButton>
               )}
               {currentBatchInfo.value && currentBatchInfo.value.key === key && (
                 <el-button-group>
-                  <el-button
+                  <AdvButton
                     type="primary"
                     onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig, 'ok')}
                     {...(ok?.attrs ?? {})}
                   >
                     {ok?.text}
-                  </el-button>
-                  <el-button
+                  </AdvButton>
+                  <AdvButton
                     onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig, 'cancel')}
                     {...(cancel?.attrs ?? {})}
                   >
                     {cancel?.text}
-                  </el-button>
+                  </AdvButton>
                 </el-button-group>
               )}
             </>
           );
 
-        case 'openModal':
-          return (
-            <el-button
-              onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig)}
-              disabled={buttonDisableInfo.value[key]}
-              {...attrs}
-            >
-              {icon && (
-                <el-icon>
-                  <icon {...iconAttrs} />
-                </el-icon>
-              )}
-              {slots[`toolBar-item-${key}`]?.() ?? text}
-            </el-button>
-          );
-
+        // 统一按钮：confirm / download / modal 由配置直接描述，行为交给 AdvButton
+        case 'button':
         case 'openMoreSearch':
           return (
-            <el-button
-              onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig)}
-              {...attrs}
-            >
-              {icon && (
-                <el-icon>
-                  <icon {...iconAttrs} />
-                </el-icon>
-              )}
-              {slots[`toolBar-item-${key}`]?.() ?? text}
-            </el-button>
-          );
-
-        case 'button':
-          return (
-            <el-button
+            <AdvButton
               loading={buttonLoadingInfo.value[key]}
-              onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig)}
               disabled={buttonDisableInfo.value[key]}
+              confirm={tooBarItemConfig.confirm}
+              download={tooBarItemConfig.download}
+              modal={tooBarItemConfig.modal}
+              modalPayload={tooBarItemConfig.modalPayload}
               {...attrs}
+              onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig)}
+              onReloadList={() => emit('refreshList')}
             >
               {icon && (
                 <el-icon>
@@ -313,14 +289,14 @@ export default defineComponent({
                 </el-icon>
               )}
               {slots[`toolBar-item-${key}`]?.() ?? text}
-            </el-button>
+            </AdvButton>
           );
 
         case 'searchButton':
           if (tooBarItemConfig.isGroup) {
             return (
               <el-button-group>
-                <el-button
+                <AdvButton
                   loading={buttonLoadingInfo.value[`${key}-search`]}
                   disabled={buttonLoadingInfo.value[`${key}-clear`]}
                   onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig, 'search')}
@@ -331,8 +307,8 @@ export default defineComponent({
                     <Search />
                   </el-icon>
                   {slots[`toolBar-item-${key}-search`]?.() ?? text}
-                </el-button>
-                <el-button
+                </AdvButton>
+                <AdvButton
                   loading={buttonLoadingInfo.value[`${key}-clear`]}
                   disabled={buttonLoadingInfo.value[`${key}-search`]}
                   onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig, 'clear')}
@@ -341,13 +317,13 @@ export default defineComponent({
                     <Refresh />
                   </el-icon>
                   {slots[`toolBar-item-${key}-reset`]?.() ?? '清空'}
-                </el-button>
+                </AdvButton>
               </el-button-group>
             );
           } else {
             return (
               <>
-                <el-button
+                <AdvButton
                   loading={buttonLoadingInfo.value[`${key}-search`]}
                   disabled={buttonLoadingInfo.value[`${key}-clear`]}
                   onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig, 'search')}
@@ -358,8 +334,8 @@ export default defineComponent({
                     <Search />
                   </el-icon>
                   {slots[`toolBar-item-${key}-search`]?.() ?? text}
-                </el-button>
-                <el-button
+                </AdvButton>
+                <AdvButton
                   loading={buttonLoadingInfo.value[`${key}-clear`]}
                   disabled={buttonLoadingInfo.value[`${key}-search`]}
                   onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig, 'clear')}
@@ -368,7 +344,7 @@ export default defineComponent({
                     <Refresh />
                   </el-icon>
                   {slots[`toolBar-item-${key}-reset`]?.() ?? '重置'}
-                </el-button>
+                </AdvButton>
               </>
             );
           }
@@ -381,47 +357,17 @@ export default defineComponent({
               showUploadList={false}
               {...attrs}
             >
-              <el-button loading={buttonLoadingInfo.value[key]}>
+              <AdvButton loading={buttonLoadingInfo.value[key]}>
                 {icon && (
                   <el-icon>
                     <icon {...iconAttrs} />
                   </el-icon>
                 )}
                 {slots[`toolBar-item-${key}`]?.() ?? text}
-              </el-button>
+              </AdvButton>
             </el-upload>
           );
 
-        case 'download':
-          return (
-            <el-button
-              onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig)}
-              {...attrs}
-            >
-              {icon && (
-                <el-icon>
-                  <icon {...iconAttrs} />
-                </el-icon>
-              )}
-              {slots[`toolBar-item-${key}`]?.() ?? text}
-            </el-button>
-          );
-        case 'confirm':
-          return (
-            <el-button
-              loading={buttonLoadingInfo.value[key]}
-              disabled={buttonDisableInfo.value[key]}
-              {...tooBarItemConfig.buttonAttrs}
-              onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig)}
-            >
-              {icon && (
-                <el-icon>
-                  <icon {...iconAttrs} />
-                </el-icon>
-              )}
-              {slots[`toolBar-item-${key}`]?.() ?? text}
-            </el-button>
-          );
         case 'custom':
           return slots[`toolBar-item-custom-${key}`]?.();
         default:

@@ -19,4 +19,12 @@
       gap: 12px;
     }
   }
+  /* grid 布局：网格参数由配置通过 CSS 变量注入 */
+  .tool_bar_grid {
+    display: grid;
+    grid-template-columns: var(--tool-bar-grid-cols, repeat(1, 1fr));
+    grid-template-rows: var(--tool-bar-grid-rows, auto);
+    gap: var(--tool-bar-grid-gap, 16px);
+    align-items: flex-end;
+  }
 }

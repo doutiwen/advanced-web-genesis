@@ -26,20 +26,21 @@
  * | checkbox | 多选框 | el-checkbox-group |
  * | date | 日期选择 | el-date-picker |
  * | time | 时间选择 | el-time-picker |
- * | batch | 批量操作按钮 | AdvButton / el-button-group |
+ * | enterSelectMode | 进入勾选模式按钮 | AdvButton / el-button-group |
+ * | getSelectedRows | 获取勾选行按钮（存在时列表固定进入勾选模式） | AdvButton |
  * | openMoreSearch | 更多搜索按钮（自动生成弹窗） | AdvButton + AdvModal |
  * | button | 统一按钮（confirm/download/modal 由配置描述） | AdvButton |
  * | searchButton | 搜索按钮 | AdvButton / el-button-group |
  * | import | 导入按钮 | el-upload + AdvButton |
  *
  * 【核心特性】
- * 1. 左右布局：工具栏项分为左侧和右侧两部分
+ * 1. 布局形式：config.layout 支持 inline（左右两栏，默认）和 grid（网格）
  * 2. 响应式布局：实现自适应布局
  * 3. 动态渲染：根据配置动态渲染不同类型的工具栏项
  * 4. 插槽支持：支持自定义工具栏项内容
  */
 
-import { defineComponent, withModifiers } from 'vue';
+import { defineComponent, withModifiers, computed } from 'vue';
 import { useToolBar, toolBarProps, toolBarEmits } from '../common/toolBar.js';
 import classes from '../common/toolBar.module.scss';
 import { ElMessage } from 'element-plus';
@@ -57,20 +58,46 @@ export default defineComponent({
     const sideType = ['left', 'right'];
 
     /**
+     * 布局形式：inline（默认）| grid
+     */
+    const layout = computed(() => props.config?.layout || 'inline');
+
+    /**
+     * grid 布局的网格配置（参考 AdvForm 的 grid 实现）
+     */
+    const gridConfig = computed(() => ({
+      cols: props.config?.grid?.cols || 'repeat(1, 1fr)',
+      rows: props.config?.grid?.rows || 'auto',
+      gap: props.config?.grid?.gap || '16px',
+    }));
+
+    /**
+     * 计算单个工具栏项在 grid 布局中的位置样式
+     * @param {Object} tooBarItemConfig - 工具栏项配置
+     * @returns {Object} 行内样式
+     */
+    const getGridItemStyle = (tooBarItemConfig) => ({
+      ...(tooBarItemConfig?.grid?.col ? { 'grid-column': tooBarItemConfig.grid.col } : {}),
+      ...(tooBarItemConfig?.grid?.row ? { 'grid-row': tooBarItemConfig.grid.row } : {}),
+    });
+
+    /**
      * 使用工具栏核心 hook，获取状态和方法
      */
     const {
       toolBarItemlist,
       formData,
-      batchInfo,
+      activeSelectionKey,
       buttonLoadingInfo,
       buttonDisableInfo,
       itemShowInfo,
       formItemOptionsInfo,
-      currentBatchInfo,
       toolBarFormItemFocusHandler,
       toolBarFormItemBlurHandler,
       toolBarButtonClickEventHandler,
+      enterSelection,
+      confirmSelection,
+      cancelSelection,
       defineExposeConfig,
       toolBarInputEnterHandler,
     } = useToolBar(props, emit, null, ElMessage.success);
@@ -86,15 +113,16 @@ export default defineComponent({
      * @param {string} tooBarItemConfig.key - 工具栏项唯一标识
      * @param {string} tooBarItemConfig.type - 工具栏项类型
      * @param {boolean} tooBarItemConfig.show - 是否显示
-     * @param {boolean} tooBarItemConfig.inRight - 是否在右侧
-     * @param {Object} tooBarItemConfig.attrs - 属性配置
-     * @param {Object} tooBarItemConfig.events - 事件配置
+     * @param {string} tooBarItemConfig.inline - inline 布局下的位置（left | right）
+     * @param {Object} tooBarItemConfig.grid - grid 布局下的占位配置（col / row）
+     * @param {Object} tooBarItemConfig.UiProps - UI 属性配置
+     * @param {Object} tooBarItemConfig.UiEvents - UI 事件配置
      * @param {Array} tooBarItemConfig.options - 选项列表（select/treeSelect/checkbox类型）
      * @param {string} tooBarItemConfig.placeholder - 占位符
      * @param {string} tooBarItemConfig.text - 按钮文本
      * @param {boolean} tooBarItemConfig.range - 是否为范围选择（date/time类型）
-     * @param {Object} tooBarItemConfig.ok - 确认按钮配置（batch类型）
-     * @param {Object} tooBarItemConfig.cancel - 取消按钮配置（batch类型）
+     * @param {Object} tooBarItemConfig.ok - 确认按钮配置（enterSelectMode类型）
+     * @param {Object} tooBarItemConfig.cancel - 取消按钮配置（enterSelectMode类型）
      * @returns {VNode|null} 渲染的 Vue 节点
      */
     const renderToolBarItem = (tooBarItemConfig) => {
@@ -102,9 +130,8 @@ export default defineComponent({
         key,
         type,
         show,
-        inRight,
-        attrs,
-        events,
+        UiProps,
+        UiEvents,
         options: configOptions,
         placeholder,
         text,
@@ -126,8 +153,8 @@ export default defineComponent({
           formData.value[key] = val;
         },
         placeholder,
-        ...attrs,
-        ...events,
+        ...UiProps,
+        ...UiEvents,
       };
 
       switch (type) {
@@ -184,7 +211,7 @@ export default defineComponent({
               placeholder={placeholder}
               treeData={options}
               dropdownStyle={{ maxHeight: '400px', overflow: 'auto' }}
-              {...attrs}
+              {...UiProps}
             />
           );
 
@@ -200,8 +227,8 @@ export default defineComponent({
               onFocus={toolBarFormItemFocusHandler}
               onBlur={toolBarFormItemBlurHandler}
               placeholder={placeholder}
-              {...attrs}
-              {...events}
+              {...UiProps}
+              {...UiEvents}
             >
               {options?.map((checkboxItemConfig) => (
                 <el-checkbox
@@ -237,35 +264,54 @@ export default defineComponent({
             />
           );
 
-        case 'batch':
-          return (
-            <>
-              {!currentBatchInfo.value && (
+        // 进入勾选模式：未激活时显示入口按钮，激活后显示确认/取消
+        case 'enterSelectMode':
+          if (activeSelectionKey.value && activeSelectionKey.value !== key) {
+            // 已有其他勾选按钮处于激活状态时隐藏入口（与原有交互一致）
+            return null;
+          }
+          if (activeSelectionKey.value === key) {
+            return (
+              <el-button-group>
                 <AdvButton
-                  onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig, 'entry')}
-                  {...attrs}
+                  type="primary"
+                  onClick={() => confirmSelection(tooBarItemConfig)}
+                  {...(ok?.UiProps ?? {})}
                 >
-                  {slots[`toolBar-item-${key}`]?.() ?? text}
+                  {ok?.text}
                 </AdvButton>
+                <AdvButton
+                  onClick={() => cancelSelection(tooBarItemConfig)}
+                  {...(cancel?.UiProps ?? {})}
+                >
+                  {cancel?.text}
+                </AdvButton>
+              </el-button-group>
+            );
+          }
+          return (
+            <AdvButton
+              onClick={() => enterSelection(tooBarItemConfig)}
+              {...UiProps}
+            >
+              {slots[`toolBar-item-${key}`]?.() ?? text}
+            </AdvButton>
+          );
+
+        // 获取勾选行：点击时由记录管理器取出勾选行并执行 onClick
+        case 'getSelectedRows':
+          return (
+            <AdvButton
+              onClick={() => emit('getSelectedRows', tooBarItemConfig)}
+              {...UiProps}
+            >
+              {icon && (
+                <el-icon>
+                  <icon {...iconAttrs} />
+                </el-icon>
               )}
-              {currentBatchInfo.value && currentBatchInfo.value.key === key && (
-                <el-button-group>
-                  <AdvButton
-                    type="primary"
-                    onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig, 'ok')}
-                    {...(ok?.attrs ?? {})}
-                  >
-                    {ok?.text}
-                  </AdvButton>
-                  <AdvButton
-                    onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig, 'cancel')}
-                    {...(cancel?.attrs ?? {})}
-                  >
-                    {cancel?.text}
-                  </AdvButton>
-                </el-button-group>
-              )}
-            </>
+              {slots[`toolBar-item-${key}`]?.() ?? text}
+            </AdvButton>
           );
 
         // 统一按钮：confirm / download / modal 由配置直接描述，行为交给 AdvButton
@@ -279,7 +325,7 @@ export default defineComponent({
               download={tooBarItemConfig.download}
               modal={tooBarItemConfig.modal}
               modalPayload={tooBarItemConfig.modalPayload}
-              {...attrs}
+              {...UiProps}
               onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig)}
               onReloadList={() => emit('refreshList')}
             >
@@ -301,7 +347,7 @@ export default defineComponent({
                   disabled={buttonLoadingInfo.value[`${key}-clear`]}
                   onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig, 'search')}
                   type="primary"
-                  {...attrs}
+                  {...UiProps}
                 >
                   <el-icon>
                     <Search />
@@ -328,7 +374,7 @@ export default defineComponent({
                   disabled={buttonLoadingInfo.value[`${key}-clear`]}
                   onClick={() => toolBarButtonClickEventHandler(tooBarItemConfig, 'search')}
                   type="primary"
-                  {...attrs}
+                  {...UiProps}
                 >
                   <el-icon>
                     <Search />
@@ -355,7 +401,7 @@ export default defineComponent({
               accept=".xlsx"
               disabled={buttonLoadingInfo.value[key]}
               showUploadList={false}
-              {...attrs}
+              {...UiProps}
             >
               <AdvButton loading={buttonLoadingInfo.value[key]}>
                 {icon && (
@@ -391,13 +437,31 @@ export default defineComponent({
             <div class={classes['toolBar_header']}>{slots[`toolBar-header`]?.()}</div>
           )}
 
-          <div class={classes['tool_bar_main']}>
-            {sideType.map((side, index) => {
-              /**
-               * 渲染左侧或右侧内容
-               * 根据 tooBarItemConfig.inRight 属性区分左右
-               */
-              const sideContent = (
+          {layout.value === 'grid' ? (
+            /* grid 布局：参考 AdvForm，容器使用 CSS 变量控制网格 */
+            <div
+              class={classes['tool_bar_grid']}
+              style={{
+                '--tool-bar-grid-cols': gridConfig.value.cols,
+                '--tool-bar-grid-rows': gridConfig.value.rows,
+                '--tool-bar-grid-gap': gridConfig.value.gap,
+              }}
+            >
+              {toolBarItemlist.value
+                .filter((tooBarItemConfig) => itemShowInfo.value[tooBarItemConfig.key])
+                .map((tooBarItemConfig) => (
+                  <div
+                    key={tooBarItemConfig.key}
+                    style={getGridItemStyle(tooBarItemConfig)}
+                  >
+                    {renderToolBarItem(tooBarItemConfig)}
+                  </div>
+                ))}
+            </div>
+          ) : (
+            /* inline 布局：左右两栏，根据工具栏项的 inline 属性区分 */
+            <div class={classes['tool_bar_main']}>
+              {sideType.map((side) => (
                 <div
                   key={side}
                   class={
@@ -406,16 +470,15 @@ export default defineComponent({
                 >
                   {toolBarItemlist.value
                     .filter((tooBarItemConfig) => {
-                      const { key, type, inRight } = tooBarItemConfig;
+                      const { key, inline } = tooBarItemConfig;
                       const shouldShow = itemShowInfo.value[key];
-                      return shouldShow && (side === 'left' ? !inRight : inRight);
+                      return shouldShow && (side === 'left' ? inline !== 'right' : inline === 'right');
                     })
                     .map((tooBarItemConfig) => renderToolBarItem(tooBarItemConfig))}
                 </div>
-              );
-              return sideContent;
-            })}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       ) : null;
   },

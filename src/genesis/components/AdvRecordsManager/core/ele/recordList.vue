@@ -11,18 +11,18 @@
       :style="props.style"
       :max-height="wrapHeight"
       v-loading="loading"
-      v-bind="props.attrs"
-      v-on="props.events"
+      v-bind="tableUiProps"
+      v-on="props.UiEvents"
       ref="elTableRef"
       @select="recordListSelectEvent"
       @select-all="recordListSelectEvent"
       @filter-change="recordListFiltersEvent"
       @sort-change="recordListSortEvent"
     >
-      <!-- 批量选择列 -->
+      <!-- 勾选列 -->
       <el-table-column
-        v-if="props.selectMode"
-        :selectable="props?.selectable || null"
+        v-if="selectMode"
+        :selectable="props.UiProps?.selectable || null"
         type="selection"
         width="55"
       ></el-table-column>
@@ -40,7 +40,7 @@
         v-for="column in columns"
         :min-width="column.type === 'index' ? 0 : column.width"
         :width="column.type === 'index' ? column.width : 'auto'"
-        v-bind="column.attrs"
+        v-bind="column.UiProps"
         :key="column.key"
         :prop="column.key"
         :label="column.title"
@@ -91,7 +91,7 @@
             size="small"
             link
             type="primary"
-            v-bind="column.attrs"
+            v-bind="column.UiProps"
           >
             {{
               typeof column.text === 'function'
@@ -108,7 +108,7 @@
               :disabled="scope.row[ctxSymbol.for('formItemDisable')]"
               v-model="formData[scope.row[props.rowKeyName]][column.key]"
               @change="(e) => formItemInputEventHandler(column, scope.row, e)"
-              v-bind="column.formItemConfig.attrs"
+              v-bind="column.formItemConfig.UiProps"
             />
             <!-- 复选框 -->
             <el-checkbox
@@ -116,9 +116,9 @@
               :disabled="scope.row[ctxSymbol.for('formItemDisable')]"
               v-model="formData[scope.row[props.rowKeyName]][column.key]"
               @change="(e) => formItemInputEventHandler(column, scope.row, e)"
-              v-bind="column.formItemConfig.attrs"
+              v-bind="column.formItemConfig.UiProps"
             >
-              {{ column.attrs.label }}
+              {{ column.UiProps.label }}
             </el-checkbox>
             <!-- 输入框 -->
             <el-input
@@ -126,7 +126,7 @@
               :disabled="scope.row[ctxSymbol.for('formItemDisable')]"
               v-model="formData[scope.row[props.rowKeyName]][column.key]"
               @change="(e) => formItemInputEventHandler(column, scope.row, e)"
-              v-bind="column.formItemConfig.attrs"
+              v-bind="column.formItemConfig.UiProps"
               clearable
             />
             <!-- 数字输入框 -->
@@ -135,7 +135,7 @@
               :disabled="scope.row[ctxSymbol.for('formItemDisable')]"
               v-model.number="formData[scope.row[props.rowKeyName]][column.key]"
               @change="(e) => formItemInputEventHandler(column, scope.row, e)"
-              v-bind="column.formItemConfig.attrs"
+              v-bind="column.formItemConfig.UiProps"
             />
             <!-- 下拉选择 -->
             <el-select
@@ -143,7 +143,7 @@
               :disabled="scope.row[ctxSymbol.for('formItemDisable')]"
               v-model="formData[scope.row[props.rowKeyName]][column.key]"
               @change="(e) => formItemInputEventHandler(column, scope.row, e)"
-              v-bind="column.formItemConfig.attrs"
+              v-bind="column.formItemConfig.UiProps"
               clearable
             >
               <el-option
@@ -162,17 +162,49 @@
               :tree-data="column.options"
               :dropdown-style="{ maxHeight: '400px', overflow: 'auto' }"
               @change="(e) => formItemInputEventHandler(column, scope.row, e)"
-              v-bind="column.formItemConfig.attrs"
+              v-bind="column.formItemConfig.UiProps"
             />
           </template>
 
-          <!-- 操作列 -->
-          <div
-            class="operater_wrapper"
-            v-if="column.type === 'operater'"
+          <!-- 文件列表列 -->
+          <el-popover
+            v-if="column.type === 'fileList'"
+            v-for="fileItem in scope.row[column.key]"
+            :key="fileItem.id"
+            :title="column.title"
+            trigger="hover"
           >
             <template
-              v-for="operaterItem in column.list"
+              v-if="fileItem.content"
+              #default
+            >
+              <p v-if="fileItem.content.text">
+                {{ fileItem.content.text }}
+              </p>
+              <img
+                class="fileList_popover_pic"
+                v-else-if="fileItem.content.pic"
+                :src="fileItem.content.pic"
+              />
+            </template>
+          </el-popover>
+        </template>
+      </el-table-column>
+
+      <!-- 操作列：由 operater 属性独立配置 -->
+      <el-table-column
+        v-if="props.operater"
+        :key="props.operater.key || 'operater'"
+        :prop="props.operater.key || 'operater'"
+        :label="props.operater.title"
+        :min-width="props.operater.width"
+        :width="'auto'"
+        v-bind="props.operater.UiProps"
+      >
+        <template #default="scope">
+          <div class="operater_wrapper">
+            <template
+              v-for="operaterItem in props.operater.buttons"
               :key="operaterItem.key"
             >
               <template v-if="scope.row[ctxSymbol.for(`operater-${operaterItem.key}-show`)]">
@@ -219,29 +251,6 @@
               </template>
             </template>
           </div>
-
-          <!-- 文件列表列 -->
-          <el-popover
-            v-if="column.type === 'fileList'"
-            v-for="fileItem in scope.row[column.key]"
-            :key="fileItem.id"
-            :title="column.title"
-            trigger="hover"
-          >
-            <template
-              v-if="fileItem.content"
-              #default
-            >
-              <p v-if="fileItem.content.text">
-                {{ fileItem.content.text }}
-              </p>
-              <img
-                class="fileList_popover_pic"
-                v-else-if="fileItem.content.pic"
-                :src="fileItem.content.pic"
-              />
-            </template>
-          </el-popover>
         </template>
       </el-table-column>
     </el-table>
@@ -271,11 +280,14 @@
    * | link | 链接列（点击跳转/查看详情） |
    * | openModal | 弹窗列（点击打开弹窗） |
    * | formItem | 可编辑表单项列（开关、输入框、选择器等） |
-   * | operater | 操作列（按钮、确认操作、表单操作器） |
    * | fileList | 文件列表列 |
    *
+   * 【操作列】
+   * 操作列由 operater 属性独立配置，结构为 { key, title, width, UiProps, buttons }，
+   * 不再作为 cols 中的一种列类型。
+   *
    * 【核心特性】
-   * 1. 动态列渲染：根据 columnsConfig 配置动态生成表格列
+   * 1. 动态列渲染：根据 cols 配置动态生成表格列
    * 2. 批量选择：支持跨页批量选择
    * 3. 可编辑列：支持在表格内直接编辑表单元素
    * 4. 排序筛选：支持表格列排序和筛选
@@ -289,7 +301,6 @@
     watchEffect,
     useAttrs,
     ref,
-    watch,
     onMounted,
     shallowRef,
     computed,
@@ -308,6 +319,15 @@
    * 组件事件定义
    */
   const emits = defineEmits(recordListEmits);
+
+  /**
+   * 表格 UI 属性
+   * selectable 仅用于批量选择列，不向下透传给 el-table
+   */
+  const tableUiProps = computed(() => {
+    const { selectable, ...restUiProps } = props.UiProps || {};
+    return restUiProps;
+  });
 
   /**
    * 表格组件引用
@@ -330,31 +350,36 @@
    * @param {Array} columnList - 列列表
    */
   const setFilterList = (columnItem, columnList) => {
-    if (!columnItem.attrs) {
-      columnItem.attrs = {
+    if (!columnItem.UiProps) {
+      columnItem.UiProps = {
         filters: [],
       };
     } else {
-      columnItem.attrs.filters = [];
+      columnItem.UiProps.filters = [];
     }
 
     if (getVarType(columnItem.getFilterList) === 'asyncFunction') {
       // 异步获取筛选列表
       columnItem.getFilterList().then((filtersList) => {
-        toRef(columnItem.attrs, 'filters').value = filtersList;
+        toRef(columnItem.UiProps, 'filters').value = filtersList;
       });
     } else if (getVarType(columnItem.getFilterList) === 'function') {
       // 同步获取筛选列表
       const filtersList = columnItem.getFilterList();
-      toRef(columnItem.attrs, 'filters').value = filtersList;
+      toRef(columnItem.UiProps, 'filters').value = filtersList;
     }
   };
 
-  //分页切换时，重新渲染已选中行状态
+  // 分页切换 / 外部设置勾选后，回显已勾选行
   const renderSelectedRowCallback = (rows) => {
     for (const row of rows) {
       elTableRef.value.toggleRowSelection(row, true);
     }
+  };
+
+  // 清空表格勾选
+  const clearSelectedRowCallback = () => {
+    elTableRef.value?.clearSelection();
   };
 
   /**
@@ -363,10 +388,9 @@
   const {
     list,
     columns,
-    pageNum,
-    pageSize,
     loading,
     formData,
+    selectMode,
     formItemInputEventHandler,
     operaterItemEventHandler,
     resolveOperaterButtonProps,
@@ -379,12 +403,14 @@
     search,
     getRecordList,
     defineExposeConfig,
+    recordListSelectEvent,
   } = useRecordList(
     { ...toRefs(props), ...attrs },
     emits,
     setFilterList,
     ElMessage.success,
-    renderSelectedRowCallback
+    renderSelectedRowCallback,
+    clearSelectedRowCallback
   );
 
   /**
@@ -392,26 +418,6 @@
    */
   const isTreeList = computed(() =>
     list.value.some((item) => Array.isArray(item.children) && item.children.length > 0)
-  );
-
-  /**
-   * 表格行选择事件处理器
-   * @param {Array} rows - 选中的行列表
-   */
-  const recordListSelectEvent = (rows) => {
-    emits('selectRows', { rows, pageNum: pageNum.value });
-  };
-
-  /**
-   * 监听选择模式变化，退出选择模式时清除选中状态
-   */
-  watch(
-    () => props.selectMode,
-    (n) => {
-      if (!n) {
-        elTableRef.value.clearSelection();
-      }
-    }
   );
 
   /**
@@ -428,7 +434,7 @@
     if (sourceFilters) {
       for (const elRecordListColKey of Object.keys(sourceFilters)) {
         const columnIndex = Number(elRecordListColKey.replace(/^.+_(\d+)$/g, '$1')) - 1;
-        const columnKey = props.columnsConfig[columnIndex].key;
+        const columnKey = props.cols[columnIndex].key;
         recordListFiltersInfo[columnKey] = [...sourceFilters[elRecordListColKey]];
         if (!recordListFiltersInfo[columnKey].length) {
           Reflect.deleteProperty(recordListFiltersInfo, columnKey);

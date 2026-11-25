@@ -2,8 +2,11 @@
   <!-- 核心记录管理器组件 -->
   <div>
     <RecordsManager
-      :recordListConfig="recordListConfig"
-      :toolBarConfig="toolBarConfig"
+      :config="config"
+      :selectedRowKeys="selectedRowKeys"
+      :pageNum="pageNum"
+      :pageSize="pageSize"
+      :total="total"
       ref="recordsManagerRef"
       v-bind="$attrs"
     >
@@ -39,13 +42,25 @@
    * 【Props 属性】
    * | 属性名 | 类型 | 必填 | 说明 |
    * |--------|------|------|------|
-   * | toolBarConfig | Object | 否 | 工具栏配置对象 |
-   * | recordListConfig | Object | 是 | 表格列表配置对象 |
+   * | config | Object | 是 | 合并配置对象：{ toolBar: 工具栏配置对象, ...列表配置对象 } |
+   * | selectedRowKeys | Array | 否 | 已勾选行的 key 列表（支持 v-model） |
+   * | pageNum | Number | 否 | 当前页码（支持 v-model:pageNum） |
+   * | pageSize | Number | 否 | 每页条数（支持 v-model:pageSize） |
+   * | total | Number | 否 | 总条数（支持 v-model:total） |
    *
    * 【暴露方法】
    * | 方法名 | 说明 | 参数 |
    * |--------|------|------|
-   * | getBatchSelectList | 获取批量选中列表 | 无 |
+   * | getRecordListRef | 获取列表实例（逃生舱） | 无 |
+   * | getToolBarRef | 获取工具栏实例（逃生舱） | 无 |
+   * | getSelectedRowKeys | 获取勾选的 key 列表 | 无 |
+   * | getSelectedRows | 获取勾选的行对象（缓存缺失时仅含 key） | 无 |
+   * | enterSelectMode | 进入勾选模式 | keys? |
+   * | exitSelectMode | 退出勾选模式并清空 | 无 |
+   * | setSelectedRowKeys | 覆盖式设置勾选 key | keys |
+   * | clearSelection | 只清空勾选 | 无 |
+   * | setPage | 设置当前页码 | pageNum |
+   * | setPageSize | 设置每页条数（回到第 1 页） | pageSize |
    * | getToolBarParams | 获取工具栏参数 | 无 |
    * | getRecordList | 获取当前列表数据 | 无 |
    * | searchParamsClear | 清空搜索参数 | 无 |
@@ -63,17 +78,37 @@
    */
   defineProps({
     /**
-     * 工具栏配置对象
+     * 合并配置对象
+     * 结构：{ toolBar: 工具栏配置对象, ...列表配置对象 }
      */
-    toolBarConfig: {
-      type: Object,
-    },
-    /**
-     * 表格列表配置对象（必填）
-     */
-    recordListConfig: {
+    config: {
       type: Object,
       required: true,
+    },
+    /**
+     * 已勾选行的 key 列表（支持 v-model:selectedRowKeys）
+     */
+    selectedRowKeys: {
+      type: Array,
+      default: () => [],
+    },
+    /**
+     * 当前页码（支持 v-model:pageNum）
+     */
+    pageNum: {
+      type: Number,
+    },
+    /**
+     * 每页条数（支持 v-model:pageSize）
+     */
+    pageSize: {
+      type: Number,
+    },
+    /**
+     * 总条数（支持 v-model:total）
+     */
+    total: {
+      type: Number,
     },
   });
 
@@ -85,10 +120,66 @@
    */
   defineExpose({
     /**
-     * 获取批量选中列表
+     * 获取列表组件实例（逃生舱）
      */
-    getBatchSelectList: () => {
-      return recordsManagerRef.value.getBatchSelectList();
+    getRecordListRef: () => {
+      return recordsManagerRef.value.getRecordListRef();
+    },
+    /**
+     * 获取工具栏组件实例（逃生舱）
+     */
+    getToolBarRef: () => {
+      return recordsManagerRef.value.getToolBarRef();
+    },
+    /**
+     * 获取勾选的 key 列表
+     */
+    getSelectedRowKeys: () => {
+      return recordsManagerRef.value.getSelectedRowKeys();
+    },
+    /**
+     * 获取勾选的行对象（缓存缺失时仅含 key）
+     */
+    getSelectedRows: () => {
+      return recordsManagerRef.value.getSelectedRows();
+    },
+    /**
+     * 进入勾选模式
+     */
+    enterSelectMode: (keys) => {
+      return recordsManagerRef.value.enterSelectMode(keys);
+    },
+    /**
+     * 退出勾选模式并清空
+     */
+    exitSelectMode: () => {
+      return recordsManagerRef.value.exitSelectMode();
+    },
+    /**
+     * 覆盖式设置勾选 key
+     */
+    setSelectedRowKeys: (keys) => {
+      return recordsManagerRef.value.setSelectedRowKeys(keys);
+    },
+    /**
+     * 只清空勾选
+     */
+    clearSelection: () => {
+      return recordsManagerRef.value.clearSelection();
+    },
+    /**
+     * 设置当前页码
+     * @param {number} pageNum - 页码（从 1 开始）
+     */
+    setPage: (pageNum) => {
+      return recordsManagerRef.value.setPage(pageNum);
+    },
+    /**
+     * 设置每页条数（会自动回到第 1 页）
+     * @param {number} pageSize - 每页条数
+     */
+    setPageSize: (pageSize) => {
+      return recordsManagerRef.value.setPageSize(pageSize);
     },
     /**
      * 获取工具栏参数

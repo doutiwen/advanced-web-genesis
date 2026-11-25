@@ -18,8 +18,11 @@
  * | link | 链接列 | 点击跳转 |
  * | openModal | 弹窗列 | 按钮自带 modal，点击打开 |
  * | formItem | 可编辑表单项列 | 开关、输入框 |
- * | operater | 操作列 | 查看、编辑、删除按钮 |
  * | fileList | 文件列表列 | 附件列表 |
+ *
+ * 【操作列】
+ * 操作列不再作为 cols 中的一种列类型，而是由独立的 operater 属性配置，
+ * 结构为 { key, title, width, UiProps, buttons }。
  *
  * 【状态管理】
  * - list: 表格数据列表
@@ -33,6 +36,12 @@
  * - sorterParams: 排序参数
  * - toolBarParams: 工具栏参数
  * - extraParams: 额外参数（持久化）
+ * - selectMode: 是否处于勾选模式（由工具栏 enterSelectMode 项驱动）
+ * - selectedRowKeys: 已勾选行的 key（唯一数据源，跨页）
+ *
+ * 【勾选模式】
+ * 勾选数据只存 key，勾选变化通过"当前页快照 + 本次选中集合"做 diff，
+ * 行对象从缓存（rowObjectCache）按 key 还原，缓存中没有时仅返回 key 对象。
  */
 
 /**
@@ -57,26 +66,30 @@ const recordListProps = {
   /**
    * 列配置列表（必填）
    */
-  columnsConfig: {
+  cols: {
     type: Array,
     required: true,
   },
   /**
-   * 批量选择模式
+   * 操作列配置
+   * 结构：{ key, title, width, UiProps, buttons: [...] }
    */
-  selectMode: {
-    type: Boolean,
-    default: false,
-  },
-  selectable: {
-    type: Function,
+  operater: {
+    type: Object,
   },
   /**
-   * 已选中的行列表
+   * 已选中的行 key 列表（由记录管理器下发，受控）
    */
-  selectedRows: {
+  selectedRowKeys: {
     type: Array,
     default: () => [],
+  },
+  /**
+   * 是否固定勾选模式（为 true 时列表始终保持勾选模式，不可退出）
+   */
+  selectionFixed: {
+    type: Boolean,
+    default: false,
   },
   /**
    * 行唯一标识字段名
@@ -86,23 +99,16 @@ const recordListProps = {
     default: 'id',
   },
   /**
-   * 表格属性
+   * 表格 UI 属性
    */
-  attrs: {
+  UiProps: {
     type: Object,
     default: () => ({}),
   },
   /**
-   * 表格事件
+   * 表格 UI 事件
    */
-  events: {
-    type: Object,
-    default: () => ({}),
-  },
-  /**
-   * 分页配置
-   */
-  paginationConfig: {
+  UiEvents: {
     type: Object,
     default: () => ({}),
   },
@@ -112,13 +118,6 @@ const recordListProps = {
   formItemActive: {
     type: Boolean,
     default: false,
-  },
-  /**
-   * 是否显示分页
-   */
-  showPagination: {
-    type: Boolean,
-    default: true,
   },
   /**
    * 表格样式
@@ -145,6 +144,12 @@ const recordListProps = {
     type: Number,
   },
   /**
+   * 总条数（支持双向绑定）
+   */
+  total: {
+    type: Number,
+  },
+  /**
    * 列表容器额外样式类名
    */
   recordListWrapClass: {
@@ -156,14 +161,13 @@ const recordListProps = {
  * 表格列表组件事件定义
  */
 const recordListEmits = [
-  'getPageBatchList', // 获取批量列表（切换分页时）
-  'selectRows', // 选中行事件
-  'clearBatch', // 清除批量选择
+  'update:selectedRowKeys', // 勾选 key 变化（唯一勾选事件）
+  'selectModeExit', // 内部退出勾选模式（搜索/改每页条数时）
 
   'getToolBarParams', // 获取工具栏参数
-  'listDataGet', // 列表数据获取完成
   'update:pageNum', // 更新页码（双向绑定）
   'update:pageSize', // 更新每页条数（双向绑定）
+  'update:total', // 更新总条数（双向绑定）
 ];
 
 /**
@@ -174,6 +178,35 @@ const recordListEmits = [
  * @returns {Object} 原始行数据
  */
 const getOriginalRowData = (rowData) => rowData?.[Symbol.for('originalData')] ?? rowData;
+
+/**
+ * 格式化勾选 key 列表：去重并剔除空值，保持原有顺序
+ * @param {Array} keys - key 列表
+ * @returns {Array} 处理后的 key 列表
+ */
+const normalizeRowKeys = (keys) => {
+  if (!Array.isArray(keys)) return [];
+  const seen = new Set();
+  const result = [];
+  for (const key of keys) {
+    if (key === undefined || key === null || seen.has(key)) continue;
+    seen.add(key);
+    result.push(key);
+  }
+  return result;
+};
+
+/**
+ * 判断两个 key 列表是否等价（忽略顺序）
+ * @param {Array} a - key 列表 A
+ * @param {Array} b - key 列表 B
+ * @returns {boolean} 是否等价
+ */
+const isSameRowKeys = (a, b) => {
+  if (a.length !== b.length) return false;
+  const targetSet = new Set(b);
+  return a.every((key) => targetSet.has(key));
+};
 
 /**
  * 表格列表核心 hook
@@ -187,19 +220,22 @@ const getOriginalRowData = (rowData) => rowData?.[Symbol.for('originalData')] ??
 const useRecordList = (
   {
     getList,
-    columnsConfig,
-    selectMode,
+    cols,
+    operater,
     rowKeyName,
     formItemActive,
     extraParams,
-    showPagination,
+    selectedRowKeys: propsSelectedRowKeys,
+    selectionFixed: propsSelectionFixed,
     pageNum: propsPageNum,
     pageSize: propsPageSize,
+    total: propsTotal,
   },
   emits,
   setFilterList,
   message,
-  renderSelectedRowCallback
+  renderSelectedRowCallback,
+  clearSelectedRowCallback
 ) => {
   /**
    * 状态管理对象
@@ -222,7 +258,7 @@ const useRecordList = (
     // 每页条数（优先使用 props 值）
     pageSize: ref(toValue(propsPageSize) ?? 20),
     // 总条数
-    totalNum: ref(0),
+    totalNum: ref(toValue(propsTotal) ?? 0),
     // 加载状态
     loading: ref(false),
     // 表单数据（用于可编辑列）
@@ -237,9 +273,29 @@ const useRecordList = (
     extraParams: toValue(extraParams) || null,
     // 是否有表单操作列
     formItemHasOperater: false,
-    // 当前页需要回显的选中行（跨页切换时缓存，getListData 完成后消费）
-    currentPageSelectedRows: ref([]),
+    // 是否处于勾选模式（由工具栏的 enterSelectMode 项驱动）
+    selectMode: ref(false),
+    // 是否固定勾选模式（工具栏存在 getSelectedRows 项时为 true，不可退出）
+    selectionFixed: ref(!!toValue(propsSelectionFixed)),
+    // 已勾选行的 key（唯一数据源，跨页、去重）
+    selectedRowKeys: ref(normalizeRowKeys(toValue(propsSelectedRowKeys))),
   };
+
+  /**
+   * 行对象缓存：key -> 行数据
+   * 仅用于把 key 还原成行对象，不作为勾选数据源
+   */
+  const rowObjectCache = new Map();
+
+  /**
+   * 当前页上一次的勾选 key 快照，用于与本次勾选做 diff
+   */
+  let pageSelectionSnapshot = [];
+
+  /**
+   * 程序化改勾选时的同步锁，防止把内部操作误判为用户取消
+   */
+  let isSelectionSyncing = false;
 
   emits('getToolBarParams', (toolBarParams) => {
     if (toolBarParams) {
@@ -248,10 +304,15 @@ const useRecordList = (
   });
 
   /**
+   * 操作列配置（响应式）
+   */
+  const operaterConfig = computed(() => toValue(operater));
+
+  /**
    * 监听列配置变化，更新列列表
    */
   watchEffect(() => {
-    state.columns.value = toValue(columnsConfig).map((sourceCol) => {
+    state.columns.value = toValue(cols).map((sourceCol) => {
       const targetCol = { ...sourceCol };
       if (targetCol.getFilterList) {
         // 设置筛选列表
@@ -281,6 +342,18 @@ const useRecordList = (
     (val) => {
       if (val !== undefined && val !== state.pageSize.value) {
         state.pageSize.value = val;
+      }
+    }
+  );
+
+  /**
+   * 监听外部 total 变化，同步到内部状态
+   */
+  watch(
+    () => toValue(propsTotal),
+    (val) => {
+      if (val !== undefined && val !== state.totalNum.value) {
+        state.totalNum.value = val;
       }
     }
   );
@@ -327,48 +400,244 @@ const useRecordList = (
   };
 
   /**
-   * 设置当前页需要回显的选中行（由 recordsManager 在切换分页时调用）
-   * @param {Array} rows - 选中行列表
+   * 设置当前页码
+   * @param {number} pageNum - 页码（从 1 开始）
    */
-  const setCurrentPageSelectedRows = (rows) => {
-    state.currentPageSelectedRows.value = rows || [];
+  const setPage = (pageNum) => {
+    const targetPageNum = Number(pageNum);
+    if (!Number.isFinite(targetPageNum) || targetPageNum < 1) return;
+    state.pageNum.value = targetPageNum;
   };
 
   /**
-   * 数据加载完成后恢复选中行状态
-   * 通过 rowKeyName(id) 对比缓存中的选中行与当前列表数据，
-   * 匹配成功后调用 renderSelectedRowCallback 勾选对应行
+   * 设置每页条数（会自动回到第 1 页）
+   * @param {number} pageSize - 每页条数
    */
-  const restoreSelectedRows = () => {
-    if (state.currentPageSelectedRows.value.length > 0 && renderSelectedRowCallback) {
-      nextTick(() => {
-        const selectedIds = new Set(
-          state.currentPageSelectedRows.value.map((row) => row[toValue(rowKeyName)])
-        );
-        const matchedRows = state.list.value.filter((row) =>
-          selectedIds.has(row[toValue(rowKeyName)])
-        );
-        if (matchedRows.length > 0) {
-          renderSelectedRowCallback(matchedRows);
-        }
-        state.currentPageSelectedRows.value = [];
-      });
+  const setPageSize = (pageSize) => {
+    const targetPageSize = Number(pageSize);
+    if (!Number.isFinite(targetPageSize) || targetPageSize < 1) return;
+    state.pageSize.value = targetPageSize;
+  };
+
+  /**
+   * 获取行的 key
+   * @param {Object} row - 行数据
+   * @returns {*} 行 key
+   */
+  const getRowKey = (row) => row?.[toValue(rowKeyName)];
+
+  /**
+   * 缓存行对象，供 key 还原为行对象使用
+   * @param {Array} rows - 行数据列表
+   */
+  const cacheRows = (rows) => {
+    for (const row of rows || []) {
+      const key = getRowKey(row);
+      if (key !== undefined && key !== null) {
+        rowObjectCache.set(key, row);
+      }
     }
   };
 
-  const clearSelectedRows = () => {
-    renderSelectedRowCallback(state.currentPageSelectedRows.value);
-    state.currentPageSelectedRows.value = [];
+  /**
+   * 通知外部勾选 key 变化
+   */
+  const emitSelectedRowKeys = () => {
+    emits('update:selectedRowKeys', [...state.selectedRowKeys.value]);
+  };
+
+  /**
+   * 清空表格勾选（加同步锁，避免触发快照 diff）
+   */
+  const clearTableSelection = () => {
+    isSelectionSyncing = true;
+    clearSelectedRowCallback?.();
+    isSelectionSyncing = false;
+  };
+
+  /**
+   * 数据加载完成后回显当前页的勾选行
+   * 以 selectedRowKeys 与当前页数据按 rowKeyName 求交集
+   */
+  const restoreSelectedRows = () => {
+    if (!state.selectMode.value) return;
+    isSelectionSyncing = true;
+    nextTick(() => {
+      const selectedKeySet = new Set(state.selectedRowKeys.value);
+      const matchedRows = state.list.value.filter((row) => selectedKeySet.has(getRowKey(row)));
+      if (matchedRows.length > 0) {
+        renderSelectedRowCallback?.(matchedRows);
+      }
+      cacheRows(matchedRows);
+      pageSelectionSnapshot = matchedRows.map((row) => getRowKey(row));
+      isSelectionSyncing = false;
+    });
+  };
+
+  /**
+   * 覆盖式应用勾选 key
+   * @param {Array} keys - 新的勾选 key 列表
+   */
+  const applySelectedRowKeys = (keys) => {
+    state.selectedRowKeys.value = normalizeRowKeys(keys);
+    pageSelectionSnapshot = [];
+    if (state.selectMode.value) {
+      clearTableSelection();
+      restoreSelectedRows();
+    }
   };
 
   /**
    * 表格行选择事件处理器
-   * @param {Array} rows - 选中的行列表
+   * 用当前页快照与本次勾选做 diff，得出真正新增/取消的行
+   * @param {Array} rows - 当前页选中的行列表
    */
   const recordListSelectEvent = (rows) => {
-    state.currentPageSelectedRows.value = rows;
-    emits('selectRows', { rows, pageNum: state.pageNum.value });
+    if (!state.selectMode.value || isSelectionSyncing) return;
+    cacheRows(rows);
+
+    const nextKeys = normalizeRowKeys((rows || []).map((row) => getRowKey(row)));
+    const prevKeySet = new Set(pageSelectionSnapshot);
+    const nextKeySet = new Set(nextKeys);
+    const removedKeys = pageSelectionSnapshot.filter((key) => !nextKeySet.has(key));
+    const addedKeys = nextKeys.filter((key) => !prevKeySet.has(key));
+
+    if (removedKeys.length) {
+      const removedKeySet = new Set(removedKeys);
+      state.selectedRowKeys.value = state.selectedRowKeys.value.filter(
+        (key) => !removedKeySet.has(key)
+      );
+    }
+    if (addedKeys.length) {
+      const selectedKeySet = new Set(state.selectedRowKeys.value);
+      const nextSelectedKeys = [...state.selectedRowKeys.value];
+      for (const key of addedKeys) {
+        if (!selectedKeySet.has(key)) {
+          selectedKeySet.add(key);
+          nextSelectedKeys.push(key);
+        }
+      }
+      state.selectedRowKeys.value = nextSelectedKeys;
+    }
+
+    pageSelectionSnapshot = nextKeys;
+    if (removedKeys.length || addedKeys.length) {
+      emitSelectedRowKeys();
+    }
   };
+
+  /**
+   * 进入勾选模式
+   * @param {Array} [keys] - 进入后的初始勾选 key 列表
+   */
+  const enterSelectMode = (keys) => {
+    // 清掉表格中可能残留的勾选
+    clearTableSelection();
+    state.selectMode.value = true;
+    state.selectedRowKeys.value = normalizeRowKeys(keys);
+    pageSelectionSnapshot = [];
+    restoreSelectedRows();
+    emitSelectedRowKeys();
+  };
+
+  /**
+   * 退出勾选模式并清空勾选
+   * 固定勾选模式下只清空勾选，不退出
+   */
+  const exitSelectMode = () => {
+    if (state.selectionFixed.value) {
+      clearSelection();
+      return;
+    }
+    clearTableSelection();
+    state.selectMode.value = false;
+    state.selectedRowKeys.value = [];
+    pageSelectionSnapshot = [];
+    emitSelectedRowKeys();
+    emits('selectModeExit');
+  };
+
+  /**
+   * 激活勾选模式（保留当前勾选 key，用于固定勾选模式的自动进入）
+   */
+  const activateSelectionMode = () => {
+    if (state.selectMode.value) return;
+    state.selectMode.value = true;
+    pageSelectionSnapshot = [];
+    restoreSelectedRows();
+  };
+
+  /**
+   * 固定勾选模式 prop 同步
+   * 开启时自动进入勾选模式（保留已传入的 key）且不可退出；关闭时若处于勾选模式则退出
+   * @param {boolean} fixed - 是否固定勾选模式
+   */
+  const applySelectionFixed = (fixed) => {
+    state.selectionFixed.value = !!fixed;
+    if (state.selectionFixed.value) {
+      activateSelectionMode();
+    } else if (state.selectMode.value) {
+      exitSelectMode();
+    }
+  };
+
+  watch(() => toValue(propsSelectionFixed), applySelectionFixed);
+
+  // 初始即为固定勾选模式时，挂载后进入勾选模式
+  onMounted(() => {
+    if (state.selectionFixed.value) {
+      activateSelectionMode();
+    }
+  });
+
+  /**
+   * 只清空勾选，不退出勾选模式
+   */
+  const clearSelection = () => {
+    clearTableSelection();
+    state.selectedRowKeys.value = [];
+    pageSelectionSnapshot = [];
+    emitSelectedRowKeys();
+  };
+
+  /**
+   * 覆盖式设置勾选 key（程序化调用）
+   * @param {Array} keys - 勾选 key 列表
+   */
+  const setSelectedRowKeys = (keys) => {
+    applySelectedRowKeys(keys);
+    emitSelectedRowKeys();
+  };
+
+  /**
+   * 获取勾选的行对象
+   * 缓存中存在返回完整行，否则仅返回包含 key 的对象
+   * @returns {Array} 行对象列表
+   */
+  const getSelectedRows = () => {
+    return state.selectedRowKeys.value.map((key) => {
+      return rowObjectCache.get(key) ?? { [toValue(rowKeyName)]: key };
+    });
+  };
+
+  /**
+   * 获取勾选的 key 列表
+   * @returns {Array} key 列表
+   */
+  const getSelectedRowKeys = () => [...state.selectedRowKeys.value];
+
+  /**
+   * 监听外部 selectedRowKeys 变化，覆盖式同步
+   */
+  watch(
+    () => toValue(propsSelectedRowKeys),
+    (val) => {
+      const nextKeys = normalizeRowKeys(val);
+      if (isSameRowKeys(nextKeys, state.selectedRowKeys.value)) return;
+      applySelectedRowKeys(nextKeys);
+    },
+    { deep: true }
+  );
 
   /**
    * 下载文件
@@ -424,7 +693,6 @@ const useRecordList = (
     targetItem.value[Symbol.for('level')] = level;
     targetItem.value[Symbol.for('originalData')] = sourceRowItem;
     delete targetItem.value.children;
-    let operaterCol;
 
     for (const colItem of state.columns.value) {
       const key = colItem.key;
@@ -454,14 +722,10 @@ const useRecordList = (
           });
         }
       }
-
-      if (colItem.type === 'operater') {
-        operaterCol = colItem;
-      }
     }
 
-    if (operaterCol?.list) {
-      for (const operaterItem of operaterCol.list) {
+    if (operaterConfig.value?.buttons) {
+      for (const operaterItem of operaterConfig.value.buttons) {
         if (operaterItem.type !== 'formItemOperater') {
           if (operaterItem.show) {
             let showFn;
@@ -548,6 +812,8 @@ const useRecordList = (
    */
   const getListData = async (tempParams) => {
     state.loading.value = true;
+    // 数据即将替换，先作废旧页快照，避免替换过程中的勾选事件误删跨页数据
+    pageSelectionSnapshot = [];
     const getListFnParams = {};
 
     // 组装分页参数
@@ -580,12 +846,13 @@ const useRecordList = (
       toValue(getList)(getListFnParams)
         .then(({ list, total }) => {
           state.list.value = listFormat(list);
+          cacheRows(state.list.value);
           state.totalNum.value = total;
-          emits('listDataGet', { list, total });
+          emits('update:total', total);
           restoreSelectedRows();
         })
         .catch(() => {
-          emits('listDataGet', { list: [], total: 0 });
+          // 请求失败时保留当前列表与总数，仅结束加载态
         })
         .finally(() => {
           state.loading.value = false;
@@ -593,9 +860,10 @@ const useRecordList = (
     } else {
       const { list, total } = toValue(getList)(getListFnParams);
       state.list.value = listFormat(list);
+      cacheRows(state.list.value);
       state.totalNum.value = total;
       state.loading.value = false;
-      emits('listDataGet', { list, total });
+      emits('update:total', total);
       restoreSelectedRows();
     }
   };
@@ -787,14 +1055,14 @@ const useRecordList = (
    */
   const resolveOperaterButtonProps = (operaterItem, rowData) => {
     const originalRowData = getOriginalRowData(rowData);
-    const { confirm, download, modal, modalPayload, attrs, buttonAttrs } = operaterItem;
+    const { confirm, download, modal, modalPayload, UiProps, buttonAttrs } = operaterItem;
 
     const buttonProps = {
       size: 'small',
       link: true,
       type: 'primary',
       ...(buttonAttrs || {}),
-      ...(attrs || {}),
+      ...(UiProps || {}),
       onClick: () => operaterItemEventHandler(operaterItem, rowData),
       // 弹窗内操作完成后刷新当前页数据
       onReloadList: () => getListData(),
@@ -850,7 +1118,8 @@ const useRecordList = (
    * @param {Object} params.toolBarParams - 工具栏参数
    */
   const search = async ({ tempParams, extraParams, toolBarParams } = {}) => {
-    toValue(selectMode) && emits('clearBatch');
+    // 搜索会改变数据范围，退出勾选模式并清空勾选
+    state.selectMode.value && exitSelectMode();
     state.pageNum.value = 1;
     toolBarParams && (state.toolBarParams = toolBarParams);
     extraParams && (state.extraParams = extraParams);
@@ -864,9 +1133,6 @@ const useRecordList = (
     if (newVal !== toValue(propsPageNum)) {
       emits('update:pageNum', newVal);
     }
-    if (toValue(selectMode)) {
-      emits('getPageBatchList', newVal);
-    }
     getListData();
   });
 
@@ -877,7 +1143,8 @@ const useRecordList = (
     if (newVal !== toValue(propsPageSize)) {
       emits('update:pageSize', newVal);
     }
-    toValue(selectMode) && emits('clearBatch');
+    // 每页条数变化会使原有勾选失去意义，退出勾选模式
+    state.selectMode.value && exitSelectMode();
     if (state.pageNum.value !== 1) {
       state.pageNum.value = 1;
     } else {
@@ -896,9 +1163,15 @@ const useRecordList = (
   const defineExposeConfig = {
     search,
     getRecordList,
-    setCurrentPageSelectedRows,
     refreshList: getListData,
-    clearSelectedRows,
+    setPage,
+    setPageSize,
+    enterSelectMode,
+    exitSelectMode,
+    clearSelection,
+    setSelectedRowKeys,
+    getSelectedRowKeys,
+    getSelectedRows,
   };
 
   // 返回状态和方法集合
@@ -910,6 +1183,8 @@ const useRecordList = (
     totalNum: state.totalNum,
     loading: state.loading,
     formData: state.formData,
+    selectMode: state.selectMode,
+    selectedRowKeys: state.selectedRowKeys,
     formItemInputEventHandler,
     operaterItemEventHandler,
     resolveOperaterButtonProps,
@@ -918,7 +1193,6 @@ const useRecordList = (
     clearFilterParams,
     setSorterParams,
     clearSorterParams,
-    setCurrentPageSelectedRows,
     getListData,
     search,
     getRecordList,

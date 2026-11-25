@@ -18,18 +18,23 @@
  * | checkbox | 多选框 | 批量筛选 |
  * | date | 日期选择 | 时间范围 |
  * | time | 时间选择 | 时间段 |
- * | batch | 批量操作按钮 | 批量删除（ok/cancel 使用 onClick） |
+ * | enterSelectMode | 进入勾选模式按钮（ok/cancel 使用 onClick） | 批量删除 |
+ * | getSelectedRows | 获取勾选行按钮（存在时列表固定进入勾选模式） | 导出选中 |
  * | openMoreSearch | 更多搜索按钮（自动生成弹窗） | 高级搜索 |
  * | button | 统一按钮，confirm/download/modal 由配置描述 | 导出、删除、新增 |
  * | searchButton | 搜索按钮 | 搜索/清空 |
  * | import | 导入按钮 | Excel导入（onClick 接收文件） |
  *
+ * 【布局形式】
+ * 由 config.layout 控制：
+ * - inline（默认）：左右两栏布局，工具栏项通过 inline: 'left' | 'right' 决定所在栏
+ * - grid：网格布局，config.grid 配置 { cols, rows, gap }，工具栏项通过 grid: { col, row } 指定所占网格
+ *
  * 【状态管理】
  * - toolBarItemlist: 工具栏项列表
  * - toolBarItemDict: 工具栏项字典（按 key 索引）
  * - formData: 表单数据
- * - batchInfo: 批量选择信息
- * - currentBatchInfo: 当前批量选择信息
+ * - activeSelectionKey: 当前激活的勾选按钮 key（仅影响工具栏展示）
  * - buttonLoadingInfo: 按钮加载状态
  * - toolBarFormItemFocus: 表单焦点状态
  */
@@ -40,6 +45,11 @@
 const toolBarProps = {
   /**
    * 工具栏配置对象（必填）
+   * 结构：
+   * - layout: 'inline'（默认）| 'grid'，布局形式
+   * - items: 工具栏项列表
+   * - grid: grid 布局下的网格配置 { cols, rows, gap }
+   * - toolBarWrapClass: 容器额外样式类名
    */
   config: {
     type: Object,
@@ -51,10 +61,10 @@ const toolBarProps = {
  * 工具栏组件事件定义
  */
 const toolBarEmits = [
-  'enterBatchMode', // 进入批量选择模式
-  'exitBatchMode', // 退出批量选择模式
-  'focus', // 表单聚焦
-  'blur', // 表单失焦
+  'selectionEnter', // 进入勾选模式
+  'selectionConfirm', // 确认当前勾选
+  'selectionCancel', // 取消当前勾选
+  'getSelectedRows', // 获取当前勾选的行数据
   'search', // 触发搜索
   'refreshList', // 原地刷新列表（保持当前页码）
 ];
@@ -85,10 +95,8 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
     }),
     // 表单数据
     formData: ref({}),
-    // 批量选择信息
-    batchInfo: ref({}),
-    // 当前批量选择信息
-    currentBatchInfo: ref(),
+    // 当前处于激活状态的勾选按钮 key（仅影响工具栏自身展示）
+    activeSelectionKey: ref(null),
     // 按钮加载状态
     buttonLoadingInfo: ref({}),
     // 按钮禁用状态
@@ -148,17 +156,6 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
   };
 
   /**
-   * 设置表单项选项状态
-   * @param {string} key - 表单项 key
-   * @param {Array} options - 选项列表
-   */
-  const setFormItemOptions = (key, options) => {
-    if (state.formItemOptionsInfo[key]) {
-      state.formItemOptionsInfo[key].value = options;
-    }
-  };
-
-  /**
    * 工具栏项配置格式化
    * @param {Object} sourceItem - 原始工具栏项配置
    */
@@ -166,16 +163,20 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
     if (!Reflect.has(state.currentProcessItem, 'show')) {
       state.currentProcessItem.show = true;
     }
+    // inline 布局下的左右位置，默认左侧
+    if (!Reflect.has(state.currentProcessItem, 'inline')) {
+      state.currentProcessItem.inline = 'left';
+    }
 
     // UI 属性转换
     if (state.UIAttrsTransform) {
-      state.currentProcessItem.attrs = state.UIAttrsTransform(sourceItem.attrs);
-    } else if (!sourceItem.attrs) {
+      state.currentProcessItem.UiProps = state.UIAttrsTransform(sourceItem.UiProps);
+    } else if (!sourceItem.UiProps) {
       // 默认属性设置
-      state.currentProcessItem.attrs = {};
+      state.currentProcessItem.UiProps = {};
     }
     // 默认事件对象
-    !sourceItem.events && (state.currentProcessItem.events = {});
+    !sourceItem.UiEvents && (state.currentProcessItem.UiEvents = {});
   };
 
   // 设置工具栏项显隐状态（没有watch时生效)
@@ -415,13 +416,6 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
               }
               state.formData.value[formItem.key] = realDefaultValue;
             }
-          } else if (targetItem.type === 'batch' && !toValue(config).batchFixed) {
-            // 批量操作按钮（非固定批量勾选模式）
-            state.batchInfo.value[key] = {
-              key,
-              everyPageSelectedListInfo: {},
-              config: targetItem,
-            };
           } else if (isButtonType(targetItem.type)) {
             // 按钮类：设置加载状态
             if (targetItem.type === 'searchButton') {
@@ -443,7 +437,6 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
         case 'delete': {
           // 删除：清理状态
           Reflect.deleteProperty(state.formData.value, key);
-          Reflect.deleteProperty(state.batchInfo.value, key);
           Reflect.deleteProperty(state.buttonLoadingInfo.value, key);
           Reflect.deleteProperty(state.buttonDisableInfo.value, key);
           Reflect.deleteProperty(state.itemShowInfo.value, key);
@@ -520,99 +513,12 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
   };
 
   /**
-   * 设置固定批量模式
-   */
-  const setBatchFixed = () => {
-    if (toValue(config).batchFixed) {
-      const key = Symbol.for('fixed');
-      state.batchInfo.value[key] = {
-        key,
-        everyPageSelectedListInfo: {},
-        config: {},
-      };
-      state.currentBatchInfo.value = state.batchInfo.value[key];
-      emits('enterBatchMode');
-    }
-  };
-
-  /**
-   * 获取所有页面的选中行列表
-   * @param {string} batchKey - 批量操作 key
-   * @returns {Array} 所有页面选中的行列表
-   */
-  const getAllPageSelectedRowList = (batchKey) => {
-    const allPageSelected = [];
-    let targetBatchDesc;
-    if (batchKey) {
-      targetBatchDesc = state.batchInfo.value[batchKey];
-    } else {
-      targetBatchDesc = state.currentBatchInfo.value;
-    }
-    for (const pageNum of Object.keys(targetBatchDesc.everyPageSelectedListInfo)) {
-      for (const selectRowItem of targetBatchDesc.everyPageSelectedListInfo[pageNum]) {
-        allPageSelected.push({ ...selectRowItem });
-      }
-    }
-    return allPageSelected;
-  };
-
-  /**
-   * 清除批量模式状态
-   */
-  const clearBatchModeState = () => {
-    if (!toValue(config).batchFixed && state.currentBatchInfo.value) {
-      emits('exitBatchMode');
-      state.currentBatchInfo.value.everyPageSelectedListInfo = {};
-      state.currentBatchInfo.value = null;
-    } else if (toValue(config).batchFixed) {
-      state.currentBatchInfo.value.everyPageSelectedListInfo = {};
-    }
-  };
-
-  /**
-   * 编辑批量选中列表
-   * @param {Array} selectedRows - 选中行列表
-   * @param {number} pageNum - 页码
-   */
-  const editBatchSelectList = (selectedRows, pageNum) => {
-    state.currentBatchInfo.value.everyPageSelectedListInfo[pageNum] = selectedRows;
-  };
-
-  /**
-   * 获取批量选中列表
-   * @param {number} pageNum - 页码
-   * @returns {Array} 指定页码的选中行列表
-   */
-  const getBatchSelectList = (pageNum) => {
-    if (state.currentBatchInfo.value) {
-      if (pageNum) {
-        if (state.currentBatchInfo.value.everyPageSelectedListInfo?.[pageNum]) {
-          return state.currentBatchInfo.value.everyPageSelectedListInfo[pageNum];
-        } else {
-          return [];
-        }
-      } else {
-        return getAllPageSelectedRowList(state.currentBatchInfo.value.key);
-      }
-    }
-  };
-
-  /**
    * 清空搜索参数
    */
   const searchParamsClear = () => {
     for (const key of Object.keys(state.formData.value)) {
       state.formData.value[key] = undefined;
     }
-  };
-
-  /**
-   * 设置按钮禁用状态
-   * @param {string} key - 按钮 key
-   * @param {boolean} disabled - 是否禁用
-   */
-  const setButtonDisable = (key, disabled) => {
-    state.buttonDisableInfo.value[key] = disabled;
   };
 
   /**
@@ -623,32 +529,6 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
    */
   const toolBarButtonClickEventHandler = (toolBarItem, payload) => {
     switch (toolBarItem.type) {
-      case 'batch': {
-        // 批量操作
-        const actionType = payload;
-        switch (actionType) {
-          case 'entry': {
-            // 进入批量模式
-            state.currentBatchInfo.value = state.batchInfo.value[toolBarItem.key];
-            emits('enterBatchMode');
-            break;
-          }
-          case 'ok': {
-            // 确认批量操作
-            toolBarItem?.ok?.onClick?.(getAllPageSelectedRowList());
-            clearBatchModeState();
-            break;
-          }
-          case 'cancel': {
-            // 取消批量操作
-            toolBarItem?.cancel?.onClick?.();
-            clearBatchModeState();
-            state.currentBatchInfo.value = null;
-            break;
-          }
-        }
-        break;
-      }
       case 'button': {
         // 统一按钮：confirm / download / modal 已由 AdvButton 处理，这里只执行动作
         const action = toolBarItem?.onClick;
@@ -748,7 +628,7 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
    */
   const getToolBarParams = () => {
     const toolBarSearchParams = cleanObject(state.formData.value, (sourceData, key) => {
-      const targetHeadRowConfigItem = toValue(config).list.find((i) => i.key === key);
+      const targetHeadRowConfigItem = toValue(config).items.find((i) => i.key === key);
       return getRealFormItemBindValue(targetHeadRowConfigItem, sourceData);
     });
     if (Object.keys(toolBarSearchParams).length) {
@@ -763,7 +643,6 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
    */
   const toolBarFormItemFocusHandler = () => {
     state.toolBarFormItemFocus.value = true;
-    emits('focus');
   };
 
   /**
@@ -771,7 +650,6 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
    */
   const toolBarFormItemBlurHandler = () => {
     state.toolBarFormItemFocus.value = false;
-    emits('blur');
   };
 
   let toolBarInputEnterHandlerTimer;
@@ -788,12 +666,11 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
   };
 
   /**
-   * 初始化：创建工具栏和设置固定批量模式
+   * 初始化：创建工具栏
    */
-  if (toValue(config).list) {
-    createToolBar(toValue(config).list);
+  if (toValue(config).items) {
+    createToolBar(toValue(config).items);
   }
-  setBatchFixed();
 
   /**
    * 组件卸载时清理监听
@@ -803,32 +680,63 @@ const useToolBar = ({ config }, emits, UIAttrsTransform, message) => {
   });
 
   /**
+   * 进入勾选模式（记录激活项并通知外部）
+   * @param {Object} selectionItem - enterSelectMode 工具栏项配置
+   */
+  const enterSelection = (selectionItem) => {
+    state.activeSelectionKey.value = selectionItem.key;
+    emits('selectionEnter', selectionItem);
+  };
+
+  /**
+   * 确认当前勾选（通知外部后复位激活项）
+   * @param {Object} selectionItem - enterSelectMode 工具栏项配置
+   */
+  const confirmSelection = (selectionItem) => {
+    emits('selectionConfirm', selectionItem);
+    state.activeSelectionKey.value = null;
+  };
+
+  /**
+   * 取消当前勾选（通知外部后复位激活项）
+   * @param {Object} selectionItem - enterSelectMode 工具栏项配置
+   */
+  const cancelSelection = (selectionItem) => {
+    emits('selectionCancel', selectionItem);
+    state.activeSelectionKey.value = null;
+  };
+
+  /**
+   * 复位当前激活的勾选按钮（外部退出勾选模式时调用）
+   */
+  const resetActiveSelection = () => {
+    state.activeSelectionKey.value = null;
+  };
+
+  /**
    * 暴露给父组件的方法配置
    */
   const defineExposeConfig = {
-    editBatchSelectList,
-    getBatchSelectList,
-    clearBatchModeState,
     getToolBarParams,
     searchParamsClear,
-    setButtonDisable,
-    setItemShowState,
-    setFormItemOptions,
+    resetActiveSelection,
   };
 
   // 返回状态和方法集合
   return {
     toolBarItemlist: state.toolBarItemlist,
     formData: state.formData,
-    batchInfo: state.batchInfo,
+    activeSelectionKey: state.activeSelectionKey,
     buttonLoadingInfo: state.buttonLoadingInfo,
     buttonDisableInfo: state.buttonDisableInfo,
     itemShowInfo: state.itemShowInfo,
     formItemOptionsInfo: state.formItemOptionsInfo,
-    currentBatchInfo: state.currentBatchInfo,
     toolBarFormItemFocusHandler,
     toolBarFormItemBlurHandler,
     toolBarButtonClickEventHandler,
+    enterSelection,
+    confirmSelection,
+    cancelSelection,
     defineExposeConfig,
     toolBarInputEnterHandler,
   };

@@ -1,7 +1,9 @@
 <template>
   <AdvRecordsManager
-    :toolBarConfig="toolBarConfig"
-    :recordListConfig="recordListConfig"
+    :config="config"
+    v-model:pageNum="pageNum"
+    v-model:pageSize="pageSize"
+    v-model:total="total"
     ref="TRMref"
   >
     <template #recordListColumn-content="{ rowData, colData }">
@@ -16,25 +18,40 @@
       </template>
     </template>
   </AdvRecordsManager>
+  <!-- 分页器按实际布局放置，与组件通过双向绑定对接 -->
+  <div class="example_pagination">
+    <el-pagination
+      v-model:current-page="pageNum"
+      v-model:page-size="pageSize"
+      :total="total"
+      :page-sizes="[10, 20, 50, 100]"
+      layout="total, sizes, prev, pager, next, jumper"
+    />
+  </div>
 </template>
 <script setup>
   const TRMref = ref();
+  // 分页状态与组件双向绑定
+  const pageNum = ref(1);
+  const pageSize = ref(20);
+  const total = ref(0);
 
   const toolBarConfig = {
-    list: [
+    layout: 'inline',
+    items: [
       {
         key: 'add',
         type: 'button',
         text: '新增',
-        attrs: {
+        UiProps: {
           type: 'primary',
           style: {
             'background-color': 'rgba(245, 154, 35, 1)',
             'border-color': 'rgba(245, 154, 35, 1)',
           },
         },
-        events: {},
-        inRight: true,
+        UiEvents: {},
+        inline: 'right',
         // 按钮自带弹窗
         modal: {
           key: 'add',
@@ -121,10 +138,10 @@
         },
       },
       {
-        key: 'batchExport',
+        key: 'exportSelected',
         text: '批量导出',
-        type: 'batch',
-        attrs: {
+        type: 'enterSelectMode',
+        UiProps: {
           type: 'primary',
         },
         ok: {
@@ -136,13 +153,13 @@
         cancel: {
           text: '取消',
         },
-        inRight: true,
+        inline: 'right',
       },
       {
-        key: 'batchDel',
+        key: 'deleteSelected',
         text: '批量删除',
-        type: 'batch',
-        attrs: {
+        type: 'enterSelectMode',
+        UiProps: {
           type: 'primary',
         },
         ok: {
@@ -154,48 +171,47 @@
         cancel: {
           text: '取消',
         },
-        inRight: true,
+        inline: 'right',
       },
       {
         key: 'title',
         placeholder: '搜索标题',
         type: 'input',
-        inRight: true,
+        inline: 'right',
       },
       {
         key: 'level',
         placeholder: '等级',
         type: 'select',
-        inRight: true,
+        inline: 'right',
         async options() {
           const res = await openApi({ api: 'example/getLevel' });
           return res.data;
         },
-        attrs: {
+        UiProps: {
           style: 'width:180px',
         },
       },
       {
         key: 'search',
         type: 'searchButton',
-        inRight: true,
+        inline: 'right',
         text: '搜索',
       },
     ],
-    //batchFixed: true, //处于固定勾选状态，此时没有batchOkText、batchCancelText、batchOkFn配置项目，只能通过getCurrentBatchSelectList方法来获取选中项
   };
   const recordListConfig = {
-    attrs: {
+    UiProps: {
       scroll: {
         scrollToFirstRowOnChange: true,
         //x: 2000,
         y: '58vh',
       },
     },
-    events: {},
+    UiEvents: {},
     rowKeyName: 'id',
     //formItemActive: true,
-    columnsConfig: [
+    cols: [
       {
         title: '序号',
         type: 'index',
@@ -206,7 +222,7 @@
         title: '名称',
         key: 'name',
         width: '13',
-        attrs: {
+        UiProps: {
           sortable: 'custom',
         },
       },
@@ -227,7 +243,7 @@
         key: 'content',
         width: '13',
         type: 'custom',
-        attrs: {
+        UiProps: {
           sortable: true,
         },
       },
@@ -248,7 +264,7 @@
         type: 'formItem',
         formItemConfig: {
           type: 'input',
-          attrs: {
+          UiProps: {
             style: 'width:180px',
           },
         },
@@ -263,7 +279,7 @@
         type: 'formItem',
         formItemConfig: {
           type: 'switch',
-          attrs: {
+          UiProps: {
             checkedValue: '0',
             checkedChildren: '启用',
             unCheckedValue: '1',
@@ -277,108 +293,108 @@
         },
         width: '10',
       },
-      {
-        title: '操作',
-        key: 'operater',
-        type: 'operater',
-        width: '12',
-        fixed: 'right',
-        list: [
-          {
-            key: 'dispatchWorkers',
-            type: 'button',
-            text: '派工',
-            show: "flowStatus==='待派工'",
-            // 行数据通过 modalPayload 自动传入，getBindData 接收该数据
-            modal: {
-              key: 'dispatchWorkers',
-              type: 'dialog',
-              title: '派工',
-              form: {
-                list: [
-                  {
-                    key: 'rectificationDeadline',
-                    type: 'date',
-                    label: '整改期限',
-                    validate: [{ type: 'required' }],
-                  },
-                  {
-                    key: 'remark',
-                    type: 'textarea',
-                    label: '备注',
-                    attrs: { showCount: true },
-                    set(sourceValue) {
-                      return `set-${sourceValue}`;
-                    },
-                    get(setterValue) {
-                      return `get-${setterValue.replace(/^set-([\w\u4e00-\u9fa5]+)$/g, '$1')}`;
-                    },
-                  },
-                ],
-                attrs: { style: 'width:600px' },
-                UIformItemAttrs: { labelCol: { span: 6, offset: 1 } },
-                events: {
-                  validateSuccess(formData) {
-                    console.log('表单数据', formData);
-                  },
-                },
-              },
-              async getBindData(rowData) {
-                console.log('派工载入行数据', rowData);
-                return { rectificationDeadline: '2025-02-02', remark: '备注一下' };
-              },
-              okButton: {
-                text: '确定派工',
-                async onClick(rowData, formData) {
-                  console.log('派工保存', rowData, formData);
-                  return { close: true, reloadList: false };
-                },
-              },
-            },
-          },
-          {
-            key: 'rectify',
-            type: 'button',
-            text: '整改',
-            show: "flowStatus==='待整改'",
-            modal: {
-              key: 'rectify',
-              type: 'dialog',
-              title: '整改',
-            },
-          },
-          {
-            key: 'del',
-            type: 'button',
-            text: '删除',
-            confirm: {
-              notice: '是否确认删除该条数据？',
-              okText: '确认',
-              cancelText: '取消1',
-              onCancel: (rowData) => {
-                console.log('取消删除', rowData);
-              },
-            },
-            async onClick(rowData) {
-              console.log('删除', rowData);
-            },
-            buttonAttrs: {
-              type: 'danger',
-            },
-            attrs: {},
-          },
-          {
-            key: 'formItemOperater',
-            type: 'formItemOperater',
-            text: '编辑行内状态',
-            async onClick(rowData) {
-              console.log('表格行内表单保存', rowData);
-              return false;
-            },
-          },
-        ],
-      },
     ],
+    // 操作列由 operater 独立配置，按钮列表使用 buttons
+    operater: {
+      title: '操作',
+      key: 'operater',
+      width: '12',
+      fixed: 'right',
+      buttons: [
+        {
+          key: 'dispatchWorkers',
+          type: 'button',
+          text: '派工',
+          show: "flowStatus==='待派工'",
+          // 行数据通过 modalPayload 自动传入，getBindData 接收该数据
+          modal: {
+            key: 'dispatchWorkers',
+            type: 'dialog',
+            title: '派工',
+            form: {
+              list: [
+                {
+                  key: 'rectificationDeadline',
+                  type: 'date',
+                  label: '整改期限',
+                  validate: [{ type: 'required' }],
+                },
+                {
+                  key: 'remark',
+                  type: 'textarea',
+                  label: '备注',
+                  attrs: { showCount: true },
+                  set(sourceValue) {
+                    return `set-${sourceValue}`;
+                  },
+                  get(setterValue) {
+                    return `get-${setterValue.replace(/^set-([\w\u4e00-\u9fa5]+)$/g, '$1')}`;
+                  },
+                },
+              ],
+              attrs: { style: 'width:600px' },
+              UIformItemAttrs: { labelCol: { span: 6, offset: 1 } },
+              events: {
+                validateSuccess(formData) {
+                  console.log('表单数据', formData);
+                },
+              },
+            },
+            async getBindData(rowData) {
+              console.log('派工载入行数据', rowData);
+              return { rectificationDeadline: '2025-02-02', remark: '备注一下' };
+            },
+            okButton: {
+              text: '确定派工',
+              async onClick(rowData, formData) {
+                console.log('派工保存', rowData, formData);
+                return { close: true, reloadList: false };
+              },
+            },
+          },
+        },
+        {
+          key: 'rectify',
+          type: 'button',
+          text: '整改',
+          show: "flowStatus==='待整改'",
+          modal: {
+            key: 'rectify',
+            type: 'dialog',
+            title: '整改',
+          },
+        },
+        {
+          key: 'del',
+          type: 'button',
+          text: '删除',
+          confirm: {
+            notice: '是否确认删除该条数据？',
+            okText: '确认',
+            cancelText: '取消1',
+            onCancel: (rowData) => {
+              console.log('取消删除', rowData);
+            },
+          },
+          async onClick(rowData) {
+            console.log('删除', rowData);
+          },
+          buttonAttrs: {
+            type: 'danger',
+          },
+          UiProps: {},
+        },
+        {
+          key: 'formItemOperater',
+          type: 'formItemOperater',
+          text: '编辑行内状态',
+          async onClick(rowData) {
+            console.log('表格行内表单保存', rowData);
+            return false;
+          },
+        },
+      ],
+    },
     async getList({
       pageParams,
       searchParams,
@@ -405,8 +421,16 @@
       });
       return res.data;
     },
-    showPagination: true,
   };
+
+  /**
+   * 记录管理器合并配置：toolBar 为工具栏配置，其余字段为列表配置
+   */
+  const config = {
+    toolBar: toolBarConfig,
+    ...recordListConfig,
+  };
+
   const modalList = [
     {
       key: 'add',
@@ -654,5 +678,11 @@
     display: block;
     width: 100%;
     height: 100%;
+  }
+  /* 外置分页器容器 */
+  .example_pagination {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 12px;
   }
 </style>

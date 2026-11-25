@@ -29,10 +29,64 @@
    */
   defineExpose({
     /**
-     * 获取批量选中列表
+     * 获取列表组件实例（逃生舱）
      */
-    getBatchSelectList: () => {
-      return originalAdvRecordsManagerRef.value.getBatchSelectList();
+    getRecordListRef: () => {
+      return originalAdvRecordsManagerRef.value.getRecordListRef();
+    },
+    /**
+     * 获取工具栏组件实例（逃生舱）
+     */
+    getToolBarRef: () => {
+      return originalAdvRecordsManagerRef.value.getToolBarRef();
+    },
+    /**
+     * 获取勾选的 key 列表
+     */
+    getSelectedRowKeys: () => {
+      return originalAdvRecordsManagerRef.value.getSelectedRowKeys();
+    },
+    /**
+     * 获取勾选的行对象（缓存缺失时仅含 key）
+     */
+    getSelectedRows: () => {
+      return originalAdvRecordsManagerRef.value.getSelectedRows();
+    },
+    /**
+     * 进入勾选模式
+     */
+    enterSelectMode: (keys) => {
+      return originalAdvRecordsManagerRef.value.enterSelectMode(keys);
+    },
+    /**
+     * 退出勾选模式并清空
+     */
+    exitSelectMode: () => {
+      return originalAdvRecordsManagerRef.value.exitSelectMode();
+    },
+    /**
+     * 覆盖式设置勾选 key
+     */
+    setSelectedRowKeys: (keys) => {
+      return originalAdvRecordsManagerRef.value.setSelectedRowKeys(keys);
+    },
+    /**
+     * 只清空勾选
+     */
+    clearSelection: () => {
+      return originalAdvRecordsManagerRef.value.clearSelection();
+    },
+    /**
+     * 设置当前页码
+     */
+    setPage: (pageNum) => {
+      return originalAdvRecordsManagerRef.value.setPage(pageNum);
+    },
+    /**
+     * 设置每页条数（会自动回到第 1 页）
+     */
+    setPageSize: (pageSize) => {
+      return originalAdvRecordsManagerRef.value.setPageSize(pageSize);
     },
     /**
      * 获取工具栏参数

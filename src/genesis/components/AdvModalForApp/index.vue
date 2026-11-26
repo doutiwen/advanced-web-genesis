@@ -19,7 +19,8 @@
 </template>
 
 <script setup>
-  import AdvModal from '@/components/AdvModal/index.js';
+  import AdvModal from '@common/components/AdvModal';
+  import { useForwardExpose } from '@common/utils/forwardExpose';
   /**
    * 核心弹窗组件引用
    */
@@ -27,10 +28,8 @@
 
   /**
    * 暴露给父组件的方法
+   * 由 useForwardExpose 代理转发到 AdvModal 实例，
+   * 应用层后续要追加自有方法时，通过第二个参数传入：useForwardExpose(ref, { ownMethod })
    */
-  defineExpose({
-    openModal: (...args) => advModalCoreRef.value?.openModal(...args),
-    closeModal: (...args) => advModalCoreRef.value?.closeModal(...args),
-    getModalData: (key) => advModalCoreRef.value?.getModalData(key),
-  });
+  defineExpose(useForwardExpose(advModalCoreRef));
 </script>

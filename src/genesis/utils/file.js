@@ -4,11 +4,7 @@
  * @param filename - 文件名（不含扩展名）
  * @param headers - 表头映射（key为数据字段，value为显示名称）
  */
-export function exportToCSV(
-  data: Record<string, unknown>[],
-  filename: string,
-  headers: Record<string, string>
-): void {
+export function exportToCSV(data, filename, headers) {
   const headerKeys = Object.keys(headers);
   // 生成表头行
   const headerRow = headerKeys.map((key) => headers[key]).join(',');
@@ -39,7 +35,7 @@ export function exportToCSV(
  * @param data - 任意数据
  * @param filename - 文件名（不含扩展名）
  */
-export function exportToJSON(data: unknown, filename: string): void {
+export function exportToJSON(data, filename) {
   const jsonContent = JSON.stringify(data, null, 2);
   downloadFile(jsonContent, `${filename}.json`, 'application/json');
 }
@@ -50,7 +46,7 @@ export function exportToJSON(data: unknown, filename: string): void {
  * @param filename - 文件名
  * @param mimeType - MIME类型
  */
-export function downloadFile(content: string, filename: string, mimeType: string): void {
+export function downloadFile(content, filename, mimeType) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -67,12 +63,12 @@ export function downloadFile(content: string, filename: string, mimeType: string
  * @param file - CSV文件对象
  * @returns 解析后的数据数组
  */
-export function importFromCSV(file: File): Promise<Record<string, unknown>[]> {
+export function importFromCSV(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const content = e.target?.result as string;
+        const content = e.target?.result || '';
         const lines = content.split('\n').filter((line) => line.trim());
         if (lines.length === 0) {
           resolve([]);
@@ -81,12 +77,12 @@ export function importFromCSV(file: File): Promise<Record<string, unknown>[]> {
 
         // 解析表头
         const headers = lines[0].split(',').map((h) => h.trim());
-        const data: Record<string, unknown>[] = [];
+        const data = [];
 
         // 解析数据行
         for (let i = 1; i < lines.length; i++) {
           const values = parseCSVLine(lines[i]);
-          const row: Record<string, unknown> = {};
+          const row = {};
           headers.forEach((header, index) => {
             row[header] = values[index] || '';
           });
@@ -108,8 +104,8 @@ export function importFromCSV(file: File): Promise<Record<string, unknown>[]> {
  * @param line - CSV行字符串
  * @returns 字段值数组
  */
-function parseCSVLine(line: string): string[] {
-  const result: string[] = [];
+function parseCSVLine(line) {
+  const result = [];
   let current = '';
   let inQuotes = false;
 

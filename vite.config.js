@@ -52,7 +52,8 @@ export default defineConfig(({ command, mode }) => {
         },
         resolvers: [ElementPlusResolver()], //自动引入element-plus组件
         imports: ['vue', 'vuex', 'vue-router'],
-        dirs: ['./src/utils', './src/api'],
+        // 工具目录：genesis 通用工具层也需要参与自动导入
+        dirs: ['./src/utils', './src/api', './src/genesis/utils'],
         eslintrc: {
           enabled: true,
         },

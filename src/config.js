@@ -1,5 +1,4 @@
-import { useTokenExpire } from '@/modules/logout/common/hooks.js';
-import { useUserStore } from './store';
+import { useStore } from './store';
 import { ElMessage } from 'element-plus';
 
 export const defaultResTransform = (sourceResponse) => {
@@ -43,7 +42,7 @@ export const defaultResTransform = (sourceResponse) => {
 
 export const defaultAxiosConfig = {
   headers: {
-    'X-Access-Token': () => useUserStore().getToken(),
+    'X-Access-Token': () => useStore().data?.token,
     'Content-Type': 'application/json;charset=utf-8',
   },
   timeout: 50000,
@@ -54,9 +53,6 @@ export const defaultCallback = {
   fail(error) {
     ElMessage.error(error.msg);
     console.log(118, ElMessage, error.msg);
-    if (error.code === 401) {
-      useTokenExpire();
-    }
   },
   final() {},
 };

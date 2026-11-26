@@ -14,8 +14,8 @@
   </TestLayout>
 </template>
 <script setup>
-  import TestLayout from '@/layouts/test.vue';
-  import AdvButton from '@/components/AdvButton/index.js';
+  import TestLayout from '@common/layouts/test.vue';
+  import AdvButton from '@common/components/AdvButton/index.js';
   import { ElMessage } from 'element-plus';
 
   const handleClick = () => {

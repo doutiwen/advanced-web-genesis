@@ -8,22 +8,7 @@
 
 <script setup>
   import zhCN from 'ant-design-vue/es/locale/zh_CN';
-  import dynamicRouterManager from './router';
-  import { useUserStore } from './store';
-
-  const advStorage = new AdvStorage();
-  if (advStorage.has('userInfo')) {
-    const userInfo = advStorage.get('userInfo');
-    const userStore = useUserStore();
-    userStore.setUser(userInfo);
-    const permissionList = userStore.getPermissionList();
-    dynamicRouterManager.createDynamicRoutes(permissionList);
-    if (window.location.pathname === '/login' || window.location.pathname === '/') {
-      dynamicRouterManager.router.push({ name: 'home' });
-    } else {
-      dynamicRouterManager.router.push(window.location.pathname);
-    }
-  }
+  // 无登录流程：路由守卫会按当前预设自动装载业务路由
 </script>
 
 <style lang="scss" src="@/styles/all.scss"></style>

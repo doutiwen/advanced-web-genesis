@@ -133,7 +133,7 @@
   import { useAdvButton, propsConfig } from '../common/index.js';
   import { useRoute } from 'vue-router';
   // 弹窗组件：传入 modal 配置时自动挂载
-  import AdvModal from '@/genesis/components/AdvModal/index.js';
+  import AdvModal from '@common/components/AdvModal';
   // UI 能力门面：由 vite.config.js 的 @ui-kit 别名按 VITE_UI_LIB 指向 ele.js 或 ant.js，
   // 因此这里不再直接依赖 element-plus，实现文件与 UI 库解耦
   import ui from '@ui-kit';

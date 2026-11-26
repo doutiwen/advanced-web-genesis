@@ -50,6 +50,7 @@
    */
   import { ref } from 'vue';
   import ModalItem from './core/ele/item.jsx';
+  import { useForwardExpose } from '@common/utils/forwardExpose';
 
   defineOptions({
     name: 'adv-modal',
@@ -73,10 +74,7 @@
 
   /**
    * 暴露弹窗操作方法给父组件
+   * 由 useForwardExpose 代理转发到 ModalItem 实例，后续新增方法无需在此同步
    */
-  defineExpose({
-    openModal: (...args) => modalItemRef.value?.openModal(...args),
-    closeModal: (...args) => modalItemRef.value?.closeModal(...args),
-    getBindData: () => modalItemRef.value?.getBindData(),
-  });
+  defineExpose(useForwardExpose(modalItemRef));
 </script>

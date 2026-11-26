@@ -5,7 +5,7 @@
  * @param format - 格式化模板（默认YYYY-MM-DD）
  * @returns 格式化后的日期字符串
  */
-export function formatDate(date: Date | string | number, format: string = 'YYYY-MM-DD'): string {
+export function formatDate(date, format = 'YYYY-MM-DD') {
   const d = new Date(date);
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0'); // 月份从0开始，补零
@@ -28,7 +28,7 @@ export function formatDate(date: Date | string | number, format: string = 'YYYY-
  * @param dateStr - 日期字符串
  * @returns Date对象
  */
-export function parseDate(dateStr: string): Date {
+export function parseDate(dateStr) {
   return new Date(dateStr);
 }
 
@@ -36,7 +36,7 @@ export function parseDate(dateStr: string): Date {
  * 获取今天日期（YYYY-MM-DD格式）
  * @returns 今天日期字符串
  */
-export function getToday(): string {
+export function getToday() {
   return formatDate(new Date());
 }
 
@@ -44,7 +44,7 @@ export function getToday(): string {
  * 获取当前年份（YYYY格式）
  * @returns 当前年份字符串
  */
-export function getThisYear(): string {
+export function getThisYear() {
   return formatDate(new Date(), 'YYYY');
 }
 
@@ -52,7 +52,7 @@ export function getThisYear(): string {
  * 获取昨天日期（YYYY-MM-DD格式）
  * @returns 昨天日期字符串
  */
-export function getYesterday(): string {
+export function getYesterday() {
   const d = new Date();
   d.setDate(d.getDate() - 1);
   return formatDate(d);
@@ -63,7 +63,7 @@ export function getYesterday(): string {
  * @param days - 天数
  * @returns N天前日期字符串
  */
-export function getDaysAgo(days: number): string {
+export function getDaysAgo(days) {
   const d = new Date();
   d.setDate(d.getDate() - days);
   return formatDate(d);
@@ -74,7 +74,7 @@ export function getDaysAgo(days: number): string {
  * @param years 要回溯的年数
  * @returns 格式化后的日期字符串
  */
-export function getYearsAgo(years: number): string {
+export function getYearsAgo(years) {
   const d = new Date();
   const targetYear = d.getFullYear() - years;
 
@@ -103,7 +103,7 @@ export function getYearsAgo(years: number): string {
  * @param date2 - 日期2
  * @returns 是否同一天
  */
-export function isSameDay(date1: Date | string, date2: Date | string): boolean {
+export function isSameDay(date1, date2) {
   const d1 = new Date(date1);
   const d2 = new Date(date2);
   return d1.toDateString() === d2.toDateString();
@@ -115,7 +115,7 @@ export function isSameDay(date1: Date | string, date2: Date | string): boolean {
  * @param date2 - 日期2
  * @returns 是否同一个月
  */
-export function isSameMonth(date1: Date | string, date2: Date | string): boolean {
+export function isSameMonth(date1, date2) {
   const d1 = new Date(date1);
   const d2 = new Date(date2);
   return d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth();
@@ -127,7 +127,7 @@ export function isSameMonth(date1: Date | string, date2: Date | string): boolean
  * @param month - 月份（0-11）
  * @returns 该月天数
  */
-export function getDaysInMonth(year: number, month: number): number {
+export function getDaysInMonth(year, month) {
   return new Date(year, month + 1, 0).getDate();
 }
 
@@ -137,7 +137,7 @@ export function getDaysInMonth(year: number, month: number): number {
  * @param days - 天数
  * @returns 新日期对象
  */
-export function addDays(date: Date | string, days: number): Date {
+export function addDays(date, days) {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
   return d;
@@ -149,7 +149,7 @@ export function addDays(date: Date | string, days: number): Date {
  * @param months - 月数
  * @returns 新日期对象
  */
-export function addMonths(date: Date | string, months: number): Date {
+export function addMonths(date, months) {
   const d = new Date(date);
   d.setMonth(d.getMonth() + months);
   return d;

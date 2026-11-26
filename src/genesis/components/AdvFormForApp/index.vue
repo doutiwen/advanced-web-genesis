@@ -18,8 +18,9 @@
 </template>
 
 <script setup>
-  import AdvForm from '@/components/AdvForm/index.js';
+  import AdvForm from '@common/components/AdvForm';
   import { computed, shallowRef, useCssModule } from 'vue';
+  import { useForwardExpose } from '@common/utils/forwardExpose';
 
   /**
    * 核心表单组件引用
@@ -28,16 +29,8 @@
 
   /**
    * 暴露给父组件的方法
+   * 由 useForwardExpose 代理转发到 AdvForm 实例（含只读的 formData），
+   * 应用层后续要追加自有方法时，通过第二个参数传入：useForwardExpose(ref, { ownMethod })
    */
-  defineExpose({
-    submit: (...args) => advFormCoreRef.value?.submit(...args),
-    clearFormData: (...args) => advFormCoreRef.value?.clearFormData(...args),
-    setFormData: (...args) => advFormCoreRef.value?.setFormData(...args),
-    updateFormData: (...args) => advFormCoreRef.value?.updateFormData(...args),
-    getFormData: (...args) => advFormCoreRef.value?.getFormData(...args),
-    // 只读表单数据：转发核心组件的 readonly(formDataState)，供外部 watch 指定字段
-    get formData() {
-      return advFormCoreRef.value?.formData;
-    },
-  });
+  defineExpose(useForwardExpose(advFormCoreRef));
 </script>

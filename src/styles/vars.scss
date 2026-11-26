@@ -1,0 +1,83 @@
+//以下变量用于padding
+$pd-xlg-size: 70px; 
+$pd-lg-size: 30px;
+$pd-md-size: 15px;
+$pd-sm-size: 8px;
+$pd-xs-size: 4px;
+//以下变量用于margin
+$m-xlg-size: 110px;
+$m-lg-size: 45px;
+$m-md-size: 25px;
+$m-sm-size: 12px;
+$m-xs-size: 6px;
+
+$page-max-width:1920px;
+$page-min-width:1200px;
+
+@mixin animate {
+  transition: all 0.3s ease-in-out 0s;
+}
+@mixin t-c {
+  text-align: center;
+}
+//pd为padding的简写
+//xs为超小，sm为小，md为中等，lg为大，xlg为超大（类似Bootstrap的尺寸分类名称）
+@mixin pd-xlg {
+  padding: $pd-xlg-size;
+}
+@mixin pd-lg {
+  padding: $pd-lg-size;
+}
+@mixin pd-md {
+  padding: $pd-md-size;
+}
+@mixin pd-sm {
+  padding: $pd-sm-size;
+}
+@mixin pd-xs {
+  padding: $pd-xs-size;
+}
+//tb为top、bottom的简写
+@mixin pd-tb-xlg {
+  padding-top: $pd-xlg-size;
+  padding-bottom: $pd-xlg-size;
+}
+@mixin pd-tb-lg {
+  padding-top: $pd-lg-size;
+  padding-bottom: $pd-lg-size;
+}
+@mixin pd-tb-md {
+  padding-top: $pd-md-size;
+  padding-bottom: $pd-md-size;
+}
+@mixin pd-tb-sm {
+  padding-top: $pd-sm-size;
+  padding-bottom: $pd-sm-size;
+}
+@mixin pd-tb-xs {
+  padding-top: $pd-xs-size;
+  padding-bottom: $pd-xs-size;
+}
+//m-b为margin-bottom简写
+@mixin m-b-xlg {
+  margin-bottom: $m-xlg-size;
+}
+@mixin m-b-lg {
+  margin-bottom: $m-lg-size;
+}
+@mixin m-b-md {
+  margin-bottom: $m-md-size;
+}
+@mixin m-b-sm {
+  margin-bottom: $m-sm-size;
+}
+@mixin m-b-xs {
+  margin-bottom: $m-xs-size;
+}
+
+//用于声明列表的子元素的间距
+@mixin listItemMargin($type:'right', $size:$m-sm-size) {
+  &:not(:last-child) {
+    margin-#{$type}: $size;
+  }
+}

@@ -1,79 +1,64 @@
 <template>
-  <!-- 主布局容器 -->
-  <div class="layout-container">
-    <!-- 顶部导航栏 -->
-    <Header
-      :collapse="collapse"
-      :user-info="userStore.userInfo"
-      @toggle-sidebar="toggleSidebar"
-    />
+  <!-- 布局容器：顶部菜单 + 内容区 -->
+  <div class="layout">
+    <Header />
 
-    <!-- 主内容区域 -->
-    <div class="main-container">
-      <Sidebar
-        :collapse="collapse"
-        :menu-list="permissionStore.visibleMenuList"
-      />
-      <!-- 页面内容区域 -->
-      <main class="content-container">
-        <Breadcrumb />
-        <div class="container">
-          <div :class="route.fullPath === '/dashboard' ? '' : 'containerBg'">
-            <router-view />
+    <main class="layout-content">
+      <!-- 路由组件挂载/切换时的淡入上移动画 -->
+      <router-view v-slot="{ Component }">
+        <transition name="page-fade" mode="out-in">
+          <div :key="route.path" class="page-wrapper">
+            <component :is="Component" />
           </div>
-        </div>
-      </main>
-    </div>
+        </transition>
+      </router-view>
+    </main>
   </div>
 </template>
 
 <script setup>
-  import { ref } from 'vue';
-  import { useRouter, useRoute } from 'vue-router';
-  import { useUserStore } from '@/stores/user';
-  import { usePermissionStore } from '@/stores/permission';
-  import Sidebar from './Sidebar.vue';
+  import { useRoute } from 'vue-router';
   import Header from './Header.vue';
-  import Breadcrumb from '@/components/Breadcrumb.vue';
+
   const route = useRoute();
-  const router = useRouter();
-  const userStore = useUserStore();
-  const permissionStore = usePermissionStore();
-  const collapse = ref(false);
-  console.log(permissionStore, ' =======');
-  function toggleSidebar() {
-    collapse.value = !collapse.value;
-  }
 </script>
 
 <style scoped lang="scss">
-  /* 主布局容器：全屏Flex布局 */
-  .layout-container {
+  .layout {
     display: flex;
     flex-direction: column;
     height: 100%;
     overflow: hidden;
-    /* 主内容区：占据剩余空间 */
-    .main-container {
-      flex: 1;
-      display: flex;
-      background-color: #f0f2f5;
-      overflow: hidden;
-    }
-    /* 页面内容区：可滚动 */
-    .content-container {
-      flex: 1;
-      // 内边距
-      overflow-y: auto;
-      .container {
-        padding: 16px;
-        height: calc(100% - 36px);
-        overflow-y: auto;
-        .containerBg {
-          width: 100%;
-          height: 100%;
-        }
-      }
-    }
+    background-color: #f0f2f5;
+  }
+
+  .layout-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .page-wrapper {
+    box-sizing: border-box;
+    min-height: 100%;
+    padding: 16px;
+  }
+
+  /* 页面组件挂载/切换动画 */
+  .page-fade-enter-active,
+  .page-fade-leave-active {
+    transition:
+      opacity 0.18s ease,
+      transform 0.18s ease;
+  }
+
+  .page-fade-enter-from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  .page-fade-leave-to {
+    opacity: 0;
+    transform: translateY(-4px);
   }
 </style>

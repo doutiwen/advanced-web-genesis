@@ -30,6 +30,8 @@
   </div>
 </template>
 <script setup>
+  import AdvRecordsManager from '@common/components/AdvRecordsManager';
+
   const TRMref = ref();
   // 分页状态与组件双向绑定
   const pageNum = ref(1);

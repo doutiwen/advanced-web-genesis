@@ -36,7 +36,7 @@
    *   └── RecordsManager (核心记录管理器，包含工具栏、表格)
    *
    * 【核心特性】
-   * 1. 方法透传：将 RecordsManager 的方法暴露给父组件
+   * 1. 方法透传：通过 useForwardExpose 代理转发 RecordsManager 的方法，无需逐条声明
    * 2. 按钮可见性：由配置中的 show 控制，组件不做权限过滤
    *
    * 【Props 属性】
@@ -71,6 +71,7 @@
   // 导入核心记录管理器组件：@ui 由 vite.config.js 中的别名按 VITE_UI_LIB 重定向到 core/ele 或 core/ant
   import RecordsManager from './core/@ui/index.vue';
   import { shallowRef } from 'vue';
+  import { useForwardExpose } from '@common/utils/forwardExpose';
 
   /**
    * 组件属性定义
@@ -117,100 +118,8 @@
 
   /**
    * 暴露给父组件的方法
+   * 由 useForwardExpose 代理转发到 RecordsManager 实例，
+   * 核心组件后续新增/调整暴露方法时，本包装层无需再逐条同步
    */
-  defineExpose({
-    /**
-     * 获取列表组件实例（逃生舱）
-     */
-    getRecordListRef: () => {
-      return recordsManagerRef.value.getRecordListRef();
-    },
-    /**
-     * 获取工具栏组件实例（逃生舱）
-     */
-    getToolBarRef: () => {
-      return recordsManagerRef.value.getToolBarRef();
-    },
-    /**
-     * 获取勾选的 key 列表
-     */
-    getSelectedRowKeys: () => {
-      return recordsManagerRef.value.getSelectedRowKeys();
-    },
-    /**
-     * 获取勾选的行对象（缓存缺失时仅含 key）
-     */
-    getSelectedRows: () => {
-      return recordsManagerRef.value.getSelectedRows();
-    },
-    /**
-     * 进入勾选模式
-     */
-    enterSelectMode: (keys) => {
-      return recordsManagerRef.value.enterSelectMode(keys);
-    },
-    /**
-     * 退出勾选模式并清空
-     */
-    exitSelectMode: () => {
-      return recordsManagerRef.value.exitSelectMode();
-    },
-    /**
-     * 覆盖式设置勾选 key
-     */
-    setSelectedRowKeys: (keys) => {
-      return recordsManagerRef.value.setSelectedRowKeys(keys);
-    },
-    /**
-     * 只清空勾选
-     */
-    clearSelection: () => {
-      return recordsManagerRef.value.clearSelection();
-    },
-    /**
-     * 设置当前页码
-     * @param {number} pageNum - 页码（从 1 开始）
-     */
-    setPage: (pageNum) => {
-      return recordsManagerRef.value.setPage(pageNum);
-    },
-    /**
-     * 设置每页条数（会自动回到第 1 页）
-     * @param {number} pageSize - 每页条数
-     */
-    setPageSize: (pageSize) => {
-      return recordsManagerRef.value.setPageSize(pageSize);
-    },
-    /**
-     * 获取工具栏参数
-     */
-    getToolBarParams: () => {
-      return recordsManagerRef.value.getToolBarParams();
-    },
-    /**
-     * 获取当前列表数据
-     */
-    getRecordList: () => {
-      return recordsManagerRef.value.getRecordList();
-    },
-    /**
-     * 清空搜索参数
-     */
-    searchParamsClear: () => {
-      return recordsManagerRef.value.searchParamsClear();
-    },
-    /**
-     * 触发搜索
-     */
-    search: (...args) => {
-      return recordsManagerRef.value.search(...args);
-    },
-    /**
-     * 刷新列表（保持当前页码不变）
-     * @param {Object} [tempParams] - 临时参数（仅单次调用有效，调用后不保留）
-     */
-    refreshList: (tempParams) => {
-      return recordsManagerRef.value.refreshList(tempParams);
-    },
-  });
+  defineExpose(useForwardExpose(recordsManagerRef));
 </script>

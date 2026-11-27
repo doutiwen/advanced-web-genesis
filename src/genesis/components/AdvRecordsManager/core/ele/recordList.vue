@@ -167,27 +167,32 @@
           </template>
 
           <!-- 文件列表列 -->
-          <el-popover
-            v-if="column.type === 'fileList'"
-            v-for="fileItem in scope.row[column.key]"
-            :key="fileItem.id"
-            :title="column.title"
-            trigger="hover"
-          >
-            <template
-              v-if="fileItem.content"
-              #default
+          <template v-if="column.type === 'fileList'">
+            <el-popover
+              v-for="fileItem in scope.row[column.key]"
+              :key="fileItem.id || fileItem.name"
+              :title="column.title"
+              trigger="hover"
             >
-              <p v-if="fileItem.content.text">
-                {{ fileItem.content.text }}
-              </p>
-              <img
-                class="fileList_popover_pic"
-                v-else-if="fileItem.content.pic"
-                :src="fileItem.content.pic"
-              />
-            </template>
-          </el-popover>
+              <!-- reference 为 hover 触发元素；缺失时弹层没有宿主，整个单元格不会渲染内容 -->
+              <template #reference>
+                <span class="fileList_download_btn">{{ fileItem.name }}</span>
+              </template>
+              <template
+                v-if="fileItem.content"
+                #default
+              >
+                <p v-if="fileItem.content.text">
+                  {{ fileItem.content.text }}
+                </p>
+                <img
+                  class="fileList_popover_pic"
+                  v-else-if="fileItem.content.pic"
+                  :src="fileItem.content.pic"
+                />
+              </template>
+            </el-popover>
+          </template>
         </template>
       </el-table-column>
 
@@ -535,6 +540,8 @@
    * 文件下载按钮样式
    */
   .fileList_download_btn {
+    display: inline-block;
+    margin-right: 8px;
     cursor: pointer;
     color: #1890ff;
     font-size: 14px;

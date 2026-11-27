@@ -200,29 +200,27 @@ export default defineComponent({
           );
 
         case 'treeSelect':
+          // 注意：el-tree-select 的树数据 prop 是 data（不是 treeData），onUpdate:modelValue 才能写回 formData
           return (
             <el-tree-select
               modelValue={formData.value[key]}
-              onUpdate={{
-                modelValue: (val) => {
-                  formData.value[key] = val;
-                },
+              onUpdate:modelValue={(val) => {
+                formData.value[key] = val;
               }}
               placeholder={placeholder}
-              treeData={options}
+              data={options}
               dropdownStyle={{ maxHeight: '400px', overflow: 'auto' }}
               {...UiProps}
             />
           );
 
         case 'checkbox':
+          // 注意：必须使用 onUpdate:modelValue，否则勾选值不会写回 formData
           return (
             <el-checkbox-group
               modelValue={formData.value[key]}
-              onUpdate={{
-                modelValue: (val) => {
-                  formData.value[key] = val;
-                },
+              onUpdate:modelValue={(val) => {
+                formData.value[key] = val;
               }}
               onFocus={toolBarFormItemFocusHandler}
               onBlur={toolBarFormItemBlurHandler}

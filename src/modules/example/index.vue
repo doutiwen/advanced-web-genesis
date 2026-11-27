@@ -67,7 +67,7 @@
                 type: 'select',
                 label: '检查部门',
                 async options() {
-                  const res = await openApi({ api: 'example/getDepartment' });
+                  const res = await openApi.example.getDepartment();
                   return res.data;
                 },
                 validate: [{ type: 'required' }],
@@ -91,7 +91,7 @@
                 type: 'select',
                 label: '隐患级别',
                 async options() {
-                  const res = await openApi({ api: 'example/getLevel' });
+                  const res = await openApi.example.getLevel();
                   return res.data;
                 },
                 validate: [{ type: 'required' }],
@@ -187,7 +187,7 @@
         type: 'select',
         inline: 'right',
         async options() {
-          const res = await openApi({ api: 'example/getLevel' });
+          const res = await openApi.example.getLevel();
           return res.data;
         },
         UiProps: {
@@ -236,7 +236,7 @@
           return `公司-${sourceData}`;
         },
         async getFilterList() {
-          const res = await openApi({ api: 'example/getDepartment' });
+          const res = await openApi.example.getDepartment();
           return res.data;
         },
       },
@@ -254,7 +254,7 @@
         key: 'level',
         width: '10',
         async getFilterList() {
-          const res = await openApi({ api: 'example/getLevel' });
+          const res = await openApi.example.getLevel();
           return res.data;
         },
         type: 'custom',
@@ -414,8 +414,7 @@
         otherParams,
         customParams
       );
-      const res = await openApi({
-        api: 'example/getList',
+      const res = await openApi.example.getList({
         params: {
           pageNum: pageParams.pageNum,
           pageSize: pageParams.pageSize,
@@ -492,7 +491,7 @@
             type: 'select',
             label: '检查部门',
             async options() {
-              const res = await openApi({ api: 'example/getDepartment' });
+              const res = await openApi.example.getDepartment();
               return res.data;
             },
             validate: [{ type: 'required' }],
@@ -542,7 +541,7 @@
                 on: ['department'],
                 options: async ({ department }) => {
                   if (department === '1') {
-                    const res = await openApi({ api: 'example/getLevel' });
+                    const res = await openApi.example.getLevel();
                     return res.data;
                   } else {
                     const res = await asyncDictionaryManager.getData('hazardCategory');

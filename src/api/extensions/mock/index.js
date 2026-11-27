@@ -1,16 +1,23 @@
 import Mock from 'mockjs';
-const mockFilePathInfo = import.meta.glob('/src/api/requestMock/file/*');
-const mockFileNameToPathMap = new Map();
-for (const path of Object.keys(mockFilePathInfo)) {
-  const name = path.replace(/^.+\.(\w+)$/g, '$1');
-  mockFileNameToPathMap.set(name, path);
-}
+import { getVarType, notEmptyValue } from '../../core/utils.js';
 
-const apiMockSettingFilePathInfo = import.meta.glob('../../modules/**/**/config/mock.js', {
+//mock 扩展：把接口配置里的同名 mock 配置转成模拟响应
+//发送器契约与 core/senders 一致：({ apiDesc, requestConfig }) => Promise<responseLike>
+//带 query: '?url' 才会拿到静态资源地址，否则拿到的是模块加载函数
+const mockFilePathInfo = import.meta.glob('./file/*', {
+  eager: true,
+  query: '?url',
   import: 'default',
 });
+const mockFileNameToPathMap = new Map();
+for (const [path, fileUrl] of Object.entries(mockFilePathInfo)) {
+  const name = path.replace(/^.+\.(\w+)$/g, '$1');
+  mockFileNameToPathMap.set(name, fileUrl);
+}
 
-console.log(150, apiMockSettingFilePathInfo);
+const apiMockSettingFilePathInfo = import.meta.glob('../../../modules/**/**/config/mock.js', {
+  import: 'default',
+});
 
 const getMockResJsonData = (reqData, mockSetting, isSuccess, msg) => {
   const mockData = {};
@@ -53,11 +60,12 @@ const getMockResJsonData = (reqData, mockSetting, isSuccess, msg) => {
 };
 
 //请求参数验证（仅验证数据类型和必填项）
-const requestParamsValidate = (validateRuleInfo, axiosConfig) => {
+const requestParamsValidate = (validateRuleInfo, requestConfig) => {
   let isPass = true;
   const requireErrorName = [],
     typeErrorName = [],
-    params = axiosConfig.method === 'get' ? axiosConfig.params : axiosConfig.data;
+    params =
+      requestConfig.method === 'get' ? requestConfig.params : requestConfig.data;
   for (const [key, rule] of Object.entries(validateRuleInfo)) {
     if (rule.require === true) {
       if (!notEmptyValue(params?.[key])) {
@@ -139,8 +147,8 @@ const uploadFileTypeValidate = (uploadFileTypes, selectedFileType) => {
   return fileMIMEs.includes(selectedFileType);
 };
 
-const requestMock = async ({ apiDesc, axiosConfig }) => {
-  const apiMockSettingFileFullPath = `../../modules/${apiDesc.modulePath}/config/mock.js`;
+const mockSend = async ({ apiDesc, requestConfig }) => {
+  const apiMockSettingFileFullPath = `../../../modules/${apiDesc.modulePath}/config/mock.js`;
   if (apiMockSettingFilePathInfo?.[apiMockSettingFileFullPath]) {
     const mockFileInfo = await apiMockSettingFilePathInfo[apiMockSettingFileFullPath]();
     const mockSetting = mockFileInfo?.[apiDesc.apiName];
@@ -157,16 +165,25 @@ const requestMock = async ({ apiDesc, axiosConfig }) => {
       if (mockSetting?.success === false) {
         isSuccess = false;
       } else if (mockSetting.validate) {
-        const validateResult = requestParamsValidate(mockSetting.validate, axiosConfig);
+        const validateResult = requestParamsValidate(mockSetting.validate, requestConfig);
         if (!validateResult.isPass) {
           isSuccess = false;
           msg = validateResult.msg;
         }
       }
 
-      const sourceResDate = axiosConfig.method === 'get' ? axiosConfig.params : axiosConfig.data;
+      const sourceRequestData =
+        requestConfig.method === 'get' ? requestConfig.params : requestConfig.data;
 
-      switch (apiDesc.method) {
+      //响应形态归一：文件类响应由 responseType / download 声明，method 只表示请求动词
+      const mockMethod =
+        apiDesc.method === 'upload'
+          ? 'upload'
+          : apiDesc.download || ['blob', 'arraybuffer'].includes(apiDesc.responseType)
+            ? 'download'
+            : 'data';
+
+      switch (mockMethod) {
         case 'upload': {
           const uploadFileTypes = [];
           if (getVarType(mockSetting?.fileType) === 'array') {
@@ -177,7 +194,7 @@ const requestMock = async ({ apiDesc, axiosConfig }) => {
           if (uploadFileTypes.length) {
             let isSuccess = true,
               msg = '上传文件类型错误：';
-            for (const [key, val] of axiosConfig.data.entries()) {
+            for (const [key, val] of requestConfig.data.entries()) {
               if (getVarType(val) === 'file') {
                 if (!uploadFileTypeValidate(uploadFileTypes, val)) {
                   isSuccess = false;
@@ -195,7 +212,12 @@ const requestMock = async ({ apiDesc, axiosConfig }) => {
               };
             }
           } else {
-            sourceResponse.data = getMockResJsonData(sourceResDate, mockSetting, isSuccess, msg);
+            sourceResponse.data = getMockResJsonData(
+              sourceRequestData,
+              mockSetting,
+              isSuccess,
+              msg
+            );
           }
           break;
         }
@@ -213,12 +235,17 @@ const requestMock = async ({ apiDesc, axiosConfig }) => {
             const mockFileBlobData = await mockFile.blob();
             sourceResponse.data = mockFileBlobData;
           } else {
-            sourceResponse.data = getMockResJsonData(sourceResDate, mockSetting, isSuccess, msg);
+            sourceResponse.data = getMockResJsonData(
+              sourceRequestData,
+              mockSetting,
+              isSuccess,
+              msg
+            );
           }
           break;
         }
         default: {
-          sourceResponse.data = getMockResJsonData(sourceResDate, mockSetting, isSuccess, msg);
+          sourceResponse.data = getMockResJsonData(sourceRequestData, mockSetting, isSuccess, msg);
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -229,4 +256,10 @@ const requestMock = async ({ apiDesc, axiosConfig }) => {
   }
 };
 
-export default requestMock;
+/**
+ * 创建 mock 发送器
+ * @returns {Function} 与 core 发送器契约一致的函数
+ */
+const createMockRequest = () => mockSend;
+
+export default createMockRequest;

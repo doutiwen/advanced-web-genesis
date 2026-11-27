@@ -111,14 +111,6 @@ export default defineConfig(({ command, mode }) => {
           replacement: `${resolve(__dirname, 'src/genesis')}/`,
         },
         { find: '@', replacement: resolve(__dirname, 'src') },
-        {
-          find: 'request',
-          replacement: resolve(
-            __dirname,
-            'src',
-            mode === 'mock' ? './api/requestMock/index.js' : './api/request.js'
-          ),
-        }, //接口请求方法，根据是否为mock模式来引入不同的文件
       ],
       extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue'],
     },

@@ -1,4 +1,4 @@
-//字典数据缓存
+//字典数据缓存：接口配置里声明 isDict 时使用，可通过 createOpenApi 传入 null 关闭
 class DictionaryCache {
   constructor() {
     this.dictionaryMap = new Map();

@@ -364,20 +364,6 @@ export class ProcessFnList {
   };
 }
 
-//运行处理函数管道
-export function runProcess(initData, processFnList) {
-  let currentData = JSON.parse(JSON.stringify(initData));
-  const argsStack = [initData];
-  // 遍历执行函数
-  processFnList.forEach((fn, index) => {
-    const fnArgs = argsStack.slice(0, index + 1);
-    currentData = fn(...fnArgs);
-    // 将新产生的数据深拷贝后推入栈中，供下一个函数使用
-    argsStack.push(JSON.parse(JSON.stringify(currentData)));
-  });
-  return currentData;
-}
-
 //执行方法栈，执行栈内最后一个方法，并且把之前的方法作为该方法的参数传入
 export class FunctionStack {
   constructor(sourceParams, fnList) {

@@ -26,7 +26,10 @@ const routeTest3Api = {
   },
   downFile: {
     url: 'api/routeTest3Api/downFile',
-    method: 'download',
+    method: 'get',
+    //二进制响应由 responseType 声明，download 控制是否自动触发浏览器下载
+    responseType: 'blob',
+    download: true,
     mock: {
       fileType: 'txt',
     },

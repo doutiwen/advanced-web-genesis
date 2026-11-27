@@ -7,8 +7,7 @@
 <script setup>
   const data = shallowRef();
   const handler = () => {
-    openApi({
-      api: 'routeTest1/routeTest2/routeTest3/getList',
+    openApi.routeTest1.routeTest2.routeTest3.getList({
       params: {
         page: 1,
         pageSize: 10,

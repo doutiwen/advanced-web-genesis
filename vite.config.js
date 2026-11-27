@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite';
 import vue from '@vitejs/plugin-vue';
+import UnoCSS from 'unocss/vite';
 import { resolve } from 'path';
 import AutoImport from 'unplugin-auto-import/vite';
 import Components from 'unplugin-vue-components/vite';
@@ -32,6 +33,8 @@ export default defineConfig(({ command, mode }) => {
     },
     plugins: [
       vue(),
+      // UnoCSS：只用于 flex 布局类，规则见根目录 uno.config.js
+      UnoCSS(),
       /*
         按需引入 element-plus 样式：为手写的 import { ElXxx } from 'element-plus'
         自动补上 element-plus/es/components/<xxx>/style/css

@@ -6,8 +6,8 @@ dist/
 .eslintrc-auto-import.json
 auto-imports.d.ts
 components.d.ts
-# 工具配置目录
-.trae/
+# 工具配置目录（.trae 及 .trae-* 前缀文件夹）
+.trae*/
 .claude/
 .vscode/
 .github/

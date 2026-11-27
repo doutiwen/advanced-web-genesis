@@ -1,3 +1,5 @@
+// UnoCSS 布局类样式（flex 相关，规则见 uno.config.js）；必须早于组件库样式引入
+import 'virtual:uno.css';
 import { createApp } from 'vue';
 import App from './app.vue';
 import dynamicRouterManager from './router/index.js';
